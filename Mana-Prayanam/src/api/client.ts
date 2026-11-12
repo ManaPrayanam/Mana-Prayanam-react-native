@@ -8,7 +8,9 @@ export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong.';
 }
 
-const configured = process.env.EXPO_PUBLIC_API_URL?.trim();
+const hosted = process.env.EXPO_PUBLIC_API_URL?.trim();
+const local = process.env.EXPO_PUBLIC_LOCAL_API_URL?.trim();
+const configured = __DEV__ ? local || hosted : hosted;
 const localHost = Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1';
 const base = (configured || `http://${localHost}:3000/api`).replace(/\/$/, '');
 

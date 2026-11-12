@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View,
 } from 'react-native';
@@ -30,7 +30,7 @@ export function OtpVerifyScreen() {
   const [digits, setDigits] = useState(['', '', '', '']);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const inputs = useRef<Array<TextInput | null>>([]);
+  const inputs = useRef<(ComponentRef<typeof TextInput> | null)[]>([]);
 
   useEffect(() => {
     const timer = setTimeout(() => inputs.current[0]?.focus(), 250);
@@ -109,7 +109,7 @@ export function OtpVerifyScreen() {
     <KeyboardAvoidingView style={authStyles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.content}>
         <Text accessibilityRole="header" style={styles.title}>Enter verification code</Text>
-        <Text style={styles.subtitle}>We sent a 4-digit code to +91 {mobile || '••••••••••'}</Text>
+        <Text style={styles.subtitle}>Enter the 4-digit test code for +91 {mobile || '••••••••••'}</Text>
         <View style={styles.boxes} accessibilityLabel="OTP digits">
           {digits.map((digit, index) => (
             <TextInput

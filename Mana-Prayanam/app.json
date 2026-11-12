@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Mana Prayanam",
+    "slug": "Mana-Prayanam",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/mana-logo.png",
+    "scheme": "manaprayanam",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "icon": "./assets/images/mana-logo.png",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Ridego connects to the local development API.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/mana-adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "web": {
+      "output": "server",
+      "favicon": "./assets/images/mana-logo.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/mana-logo.png",
+          "imageWidth": 220,
+          "resizeMode": "contain"
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

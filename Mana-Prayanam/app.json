@@ -11,6 +11,7 @@
       "icon": "./assets/images/mana-logo.png",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Ridego connects to the local development API.",
+        "NSLocationWhenInUseUsageDescription": "Mana Prayanam uses your location to set the ride pickup on the map.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -21,6 +22,7 @@
         "foregroundImage": "./assets/images/mana-adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
       },
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize"
     },
@@ -39,7 +41,13 @@
           "resizeMode": "contain"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Mana Prayanam uses your location to set the ride pickup on the map."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

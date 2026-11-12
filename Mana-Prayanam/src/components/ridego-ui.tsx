@@ -3,11 +3,16 @@ import {
   ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { usePullToRefresh } from '@/components/pull-to-refresh';
 import { color, radius, spacing } from '@/theme/brand';
 
-export function Screen({ title, children, brand = false }: { title: string; children: ReactNode; brand?: boolean }) {
+export function Screen({ title, children, brand = false, onRefresh }: {
+  title: string; children: ReactNode; brand?: boolean; onRefresh?: () => void | Promise<void>;
+}) {
+  const pull = usePullToRefresh(onRefresh ?? (async () => {}));
   return <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.page}>
-    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}
+      refreshControl={onRefresh ? pull.control : undefined}>
       {brand && <Text style={styles.wordmark}>Mana Prayanam</Text>}
       <Text accessibilityRole="header" style={styles.title}>{title}</Text>
       {children}

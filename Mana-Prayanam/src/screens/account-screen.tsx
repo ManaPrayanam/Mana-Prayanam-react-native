@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { updatePhone } from '@/api/drivers';
 import { errorMessage } from '@/api/client';
@@ -18,7 +19,7 @@ export function AccountScreen() {
     try { await action(); } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
   }
 
-  return <Screen title="Account">
+  return <Screen title="Profile">
     <Card>
       <Label>{session?.user.name}</Label>
       <Label muted>{session?.user.email}</Label>
@@ -33,6 +34,9 @@ export function AccountScreen() {
       {message && <Label>{message}</Label>}
       <Feedback error={error} loading={busy} />
     </Card>
-    <Button label="Sign out" secondary disabled={busy} onPress={() => submit(signOut)} />
+    <Button label="Sign out" secondary disabled={busy} onPress={() => submit(async () => {
+      await signOut();
+      router.replace('/');
+    })} />
   </Screen>;
 }

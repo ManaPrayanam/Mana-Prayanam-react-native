@@ -35,7 +35,7 @@ export function DriverScreen() {
     }
   }
 
-  return <Screen title="Available rides">
+  return <Screen title="Available rides" onRefresh={async () => { refresh(); }}>
     <Feedback error={actionError || error} loading={!data || busy} />
     {data && <Card>
       <Label>Vehicle for this ride</Label>
@@ -49,8 +49,6 @@ export function DriverScreen() {
       <Button label="Accept ride" disabled={!vehicleId || busy} onPress={() => accept(ride.id)} />
     </RideCard>)}
     <Button label="Refresh requests" secondary onPress={refresh} />
-    <Button label="My rides" secondary onPress={() => router.push('/rides')} />
     <Button label="Vehicles" secondary onPress={() => router.push('/vehicles')} />
-    <Button label="Account" secondary onPress={() => router.push('/account')} />
   </Screen>;
 }

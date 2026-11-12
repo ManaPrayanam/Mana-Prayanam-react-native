@@ -1,11 +1,12 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { errorMessage } from '@/api/client';
 import { checkMobile, loginWithMobile, signupWithMobile, type Gender, type Session } from '@/api/auth';
 import { useSession } from '@/auth/session';
 import { AuthHeader } from '@/components/auth-header';
+import { usePullToRefresh } from '@/components/pull-to-refresh';
 import { Feedback, Label } from '@/components/ridego-ui';
 import { AuthField } from '@/components/auth-field';
 import { authStyles } from '@/components/auth-styles';
@@ -29,6 +30,16 @@ export function CustomerSignup() {
   const [verified, setVerified] = useState<Session | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  const onRefresh = useCallback(async () => {
+    Keyboard.dismiss();
+    setGenderOpen(false);
+    setError('');
+    setOpen(false);
+    setVerified(null);
+    setOtp('');
+  }, []);
+  const pull = usePullToRefresh(onRefresh);
 
   async function openSheet() {
     if (!login && (!name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || !gender)) {
@@ -98,7 +109,7 @@ export function CustomerSignup() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentInsetAdjustmentBehavior="never"
-        bounces={false}
+        refreshControl={pull.control}
       >
         <View style={styles.form}>
           <Text accessibilityRole="header" style={styles.sectionTitle}>

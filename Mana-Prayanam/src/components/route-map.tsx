@@ -22,6 +22,8 @@ type Props = {
   route: [number, number][];
   nearby: Array<{ lat: number; lng: number }>;
   vehicle: 'bike' | 'auto';
+  pickupLabel: string;
+  dropLabel: string;
   bottomPadRatio?: number;
 };
 
@@ -31,6 +33,8 @@ function makeHtml(
   route: [number, number][],
   nearby: Array<{ lat: number; lng: number }>,
   vehicleIcon: string,
+  pickupLabel: string,
+  dropLabel: string,
   bottomPadRatio: number,
 ) {
   const line = route.length >= 2
@@ -43,11 +47,13 @@ function makeHtml(
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.js"></script>
 <style>
-html,body,#map{margin:0;width:100%;height:100%;background:#d5ddd9}
-.pin{width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
-.pin-pick{background:#159447}
-.pin-drop{background:#E67E22;width:18px;height:18px}
-.fleet{width:36px;height:36px;border-radius:18px;background:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);object-fit:contain}
+html,body,#map{margin:0;width:100%;height:100%;background:#e8eee9}
+.dot{width:14px;height:14px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.dot-pick{background:#2563EB}
+.dot-drop{background:#159447;width:16px;height:16px}
+.fleet-wrap{width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:transparent}
+.fleet{width:38px;height:38px;object-fit:contain;background:transparent;border:0;border-radius:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}
+.tag{background:#fff;border-radius:16px;padding:6px 10px;font:600 12px -apple-system,BlinkMacSystemFont,sans-serif;color:#111827;box-shadow:0 2px 8px rgba(0,0,0,.18);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head><body><div id="map"></div>
 <script>
@@ -57,7 +63,15 @@ const drop = ${JSON.stringify([drop.lng, drop.lat])};
 const route = ${JSON.stringify(line)};
 const nearby = ${JSON.stringify(nearby)};
 const vehicleIcon = ${JSON.stringify(vehicleIcon)};
+const pickupLabel = ${JSON.stringify(pickupLabel)};
+const dropLabel = ${JSON.stringify(dropLabel)};
 const bottomPad = ${JSON.stringify(bottomPadRatio)};
+
+function shortLabel(text) {
+  const t = String(text || '');
+  return t.length > 18 ? t.slice(0, 17) + '…' : t;
+}
+
 try {
   const map = new maplibregl.Map({
     container:'map',
@@ -78,27 +92,47 @@ try {
       data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route } }
     });
     map.addLayer({
+      id: 'route-glow',
+      type: 'line',
+      source: 'route',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#86EFAC', 'line-width': 10, 'line-opacity': 0.55 }
+    });
+    map.addLayer({
       id: 'route-line',
       type: 'line',
       source: 'route',
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#159447', 'line-width': 5, 'line-opacity': 0.95 }
+      paint: { 'line-color': '#159447', 'line-width': 5, 'line-opacity': 1 }
     });
 
-    const elPick = document.createElement('div');
-    elPick.className = 'pin pin-pick';
-    new maplibregl.Marker({ element: elPick }).setLngLat(pickup).addTo(map);
+    const pickDot = document.createElement('div');
+    pickDot.className = 'dot dot-pick';
+    new maplibregl.Marker({ element: pickDot }).setLngLat(pickup).addTo(map);
 
-    const elDrop = document.createElement('div');
-    elDrop.className = 'pin pin-drop';
-    new maplibregl.Marker({ element: elDrop }).setLngLat(drop).addTo(map);
+    const dropDot = document.createElement('div');
+    dropDot.className = 'dot dot-drop';
+    new maplibregl.Marker({ element: dropDot }).setLngLat(drop).addTo(map);
 
-    nearby.slice(0, 3).forEach((b) => {
+    const pickTag = document.createElement('div');
+    pickTag.className = 'tag';
+    pickTag.textContent = shortLabel(pickupLabel);
+    new maplibregl.Marker({ element: pickTag, offset: [0, -28] }).setLngLat(pickup).addTo(map);
+
+    const dropTag = document.createElement('div');
+    dropTag.className = 'tag';
+    dropTag.textContent = shortLabel(dropLabel);
+    new maplibregl.Marker({ element: dropTag, offset: [0, -28] }).setLngLat(drop).addTo(map);
+
+    nearby.forEach((b, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'fleet-wrap';
       const img = document.createElement('img');
       img.className = 'fleet';
       img.src = vehicleIcon;
-      img.alt = 'nearby';
-      new maplibregl.Marker({ element: img, anchor: 'center' }).setLngLat([b.lng, b.lat]).addTo(map);
+      img.style.transform = 'rotate(' + ((i * 37) % 60 - 30) + 'deg)';
+      wrap.appendChild(img);
+      new maplibregl.Marker({ element: wrap, anchor: 'center' }).setLngLat([b.lng, b.lat]).addTo(map);
     });
 
     const bounds = new maplibregl.LngLatBounds(pickup, pickup);
@@ -107,7 +141,7 @@ try {
     nearby.forEach((b) => bounds.extend([b.lng, b.lat]));
     const h = map.getContainer().clientHeight;
     map.fitBounds(bounds, {
-      padding: { top: 56, left: 40, right: 40, bottom: Math.round(h * bottomPad) + 28 },
+      padding: { top: 72, left: 44, right: 44, bottom: Math.round(h * bottomPad) + 36 },
       maxZoom: 15,
       duration: 0,
     });
@@ -124,19 +158,32 @@ export function RouteMap({
   route,
   nearby,
   vehicle,
-  bottomPadRatio = 0.46,
+  pickupLabel,
+  dropLabel,
+  bottomPadRatio = 0.5,
 }: Props) {
   const [failed, setFailed] = useState(false);
   const icon = vehicle === 'auto' ? AUTO_MARKER_DATA_URI : BIKE_MARKER_DATA_URI;
   const source = useMemo(
-    () => ({ html: makeHtml(pickup, drop, route, nearby, icon, bottomPadRatio) }),
-    [pickup, drop, route, nearby, icon, bottomPadRatio],
+    () => ({
+      html: makeHtml(
+        pickup,
+        drop,
+        route,
+        nearby,
+        icon,
+        pickupLabel,
+        dropLabel,
+        bottomPadRatio,
+      ),
+    }),
+    [pickup, drop, route, nearby, icon, pickupLabel, dropLabel, bottomPadRatio],
   );
 
   return (
     <View style={styles.container}>
       <WebView
-        key={vehicle}
+        key={`${vehicle}-${nearby.length}`}
         source={source}
         originWhitelist={['*']}
         onShouldStartLoadWithRequest={({ url }) => url === 'about:blank' || url.startsWith('data:text/html')}
@@ -161,7 +208,7 @@ export function RouteMap({
 }
 
 const styles = StyleSheet.create({
-  container: { ...StyleSheet.absoluteFill, backgroundColor: '#D5DDD9' },
+  container: { ...StyleSheet.absoluteFill, backgroundColor: '#E8EEE9' },
   error: {
     position: 'absolute',
     top: '30%',

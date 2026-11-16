@@ -50,10 +50,14 @@ function fareFor(vehicle: 'bike' | 'auto', distanceKm: number): VehicleQuote {
 }
 
 function nearbyAroundPickup(pickup: MapCoords) {
+  // Scatter dummy fleet around the pickup pin (Rapido-style).
   const offsets = [
-    { dLat: 0.00055, dLng: 0.00025 },
-    { dLat: -0.00035, dLng: 0.0006 },
-    { dLat: 0.0002, dLng: -0.00055 },
+    { dLat: 0.0007, dLng: 0.00015 },
+    { dLat: 0.00035, dLng: 0.00075 },
+    { dLat: -0.0002, dLng: 0.00085 },
+    { dLat: -0.00065, dLng: 0.0003 },
+    { dLat: -0.00045, dLng: -0.00055 },
+    { dLat: 0.00025, dLng: -0.0007 },
   ];
   return offsets.map((o, i) => ({
     id: `near-${i + 1}`,

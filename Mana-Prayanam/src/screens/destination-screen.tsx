@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { searchPlaces, type MapCoords, type PlaceHit } from '@/api/geocode';
 import { setRideDraft } from '@/location/ride-draft';
-import { peekLocation } from '@/location/warm-location';
+import { peekLocation, warmLocation } from '@/location/warm-location';
 import { color, spacing } from '@/theme/brand';
 
 const RECENT_DROPS = [
@@ -62,6 +62,7 @@ export function DestinationScreen() {
 
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 400);
+    void warmLocation();
     return () => clearTimeout(t);
   }, []);
 
@@ -82,19 +83,20 @@ export function DestinationScreen() {
     setSearching(true);
     searchTimer.current = setTimeout(() => {
       const req = ++searchReq.current;
-      void searchPlaces(q, peekLocation() ?? undefined)
-        .then((rows) => {
+      void (async () => {
+        const near = peekLocation() ?? (await warmLocation()) ?? undefined;
+        try {
+          const rows = await searchPlaces(q, near);
           if (req !== searchReq.current) return;
           setHits(rows);
-        })
-        .catch(() => {
+        } catch {
           if (req !== searchReq.current) return;
           setHits([]);
-        })
-        .finally(() => {
+        } finally {
           if (req !== searchReq.current) return;
           setSearching(false);
-        });
+        }
+      })();
     }, 350);
   }, []);
 
@@ -301,6 +303,13 @@ export function DestinationScreen() {
                   <Ionicons name="location-outline" size={22} color="#6B7280" style={styles.recentIcon} />
                   <View style={styles.recentCopy}>
                     <Text style={styles.recentName} numberOfLines={2}>{hit.label}</Text>
+                    {hit.distanceKm != null ? (
+                      <Text style={styles.recentAddress}>
+                        {hit.distanceKm < 1
+                          ? `${Math.round(hit.distanceKm * 1000)} m away`
+                          : `${hit.distanceKm.toFixed(1)} km away`}
+                      </Text>
+                    ) : null}
                   </View>
                 </Pressable>
               ))}

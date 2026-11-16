@@ -101,10 +101,16 @@ export function PickOnMapScreen() {
     }
     setSearching(true);
     searchTimer.current = setTimeout(() => {
-      void searchPlaces(text, center ?? peekLocation() ?? undefined)
-        .then((rows) => setHits(rows))
-        .catch(() => setHits([]))
-        .finally(() => setSearching(false));
+      void (async () => {
+        const near = center ?? peekLocation() ?? (await warmLocation()) ?? undefined;
+        try {
+          setHits(await searchPlaces(text, near));
+        } catch {
+          setHits([]);
+        } finally {
+          setSearching(false);
+        }
+      })();
     }, 400);
   }, [center]);
 

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -20,6 +20,17 @@ import { color, spacing } from '@/theme/brand';
 
 type Vehicle = 'bike' | 'auto';
 
+const FILTERS = ['All', 'Women Preferred', 'Priority'] as const;
+
+function dropClock(mins: number) {
+  const d = new Date(Date.now() + mins * 60_000);
+  let h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, '0');
+  const ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
 export function RideQuoteScreen() {
   const insets = useSafeAreaInsets();
   const { authenticated } = useSession();
@@ -28,6 +39,7 @@ export function RideQuoteScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [vehicle, setVehicle] = useState<Vehicle>('bike');
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('All');
   const [booking, setBooking] = useState(false);
 
   const load = useCallback(async () => {
@@ -71,6 +83,10 @@ export function RideQuoteScreen() {
   const selected = quote?.quotes[vehicle];
   const pickupLabel = draft.pickupLabel || 'Pickup';
   const dropLabel = draft.dropLabel || 'Drop';
+  const bargainFare = useMemo(
+    () => (selected ? Math.max(20, selected.fareInr - 2) : 0),
+    [selected],
+  );
 
   return (
     <View style={styles.root}>
@@ -82,7 +98,9 @@ export function RideQuoteScreen() {
             route={quote.geometry.coordinates}
             nearby={quote.nearbyVehicles}
             vehicle={vehicle}
-            bottomPadRatio={0.48}
+            pickupLabel={pickupLabel}
+            dropLabel={dropLabel}
+            bottomPadRatio={0.52}
           />
         ) : (
           <View style={styles.mapPlaceholder}>
@@ -99,30 +117,17 @@ export function RideQuoteScreen() {
             if (router.canGoBack()) router.back();
             else router.replace('/(tabs)');
           }}
-          style={({ pressed }) => [styles.backBtn, pressed && styles.dim]}
+          style={({ pressed }) => [styles.roundBtn, pressed && styles.dim]}
         >
-          <Ionicons name="arrow-back" size={22} color="#1A237E" />
+          <Ionicons name="arrow-back" size={22} color="#111827" />
         </Pressable>
       </View>
 
-      {quote ? (
-        <View style={styles.labels} pointerEvents="none">
-          <View style={[styles.labelPill, styles.labelPickup]}>
-            <View style={styles.dotGreen} />
-            <Text style={styles.labelText} numberOfLines={1}>{pickupLabel}</Text>
-          </View>
-          <View style={[styles.labelPill, styles.labelDrop]}>
-            <View style={styles.dotOrange} />
-            <Text style={styles.labelText} numberOfLines={1}>{dropLabel}</Text>
-          </View>
-        </View>
-      ) : null}
-
-      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         {loading ? (
           <View style={styles.sheetLoading}>
             <ActivityIndicator color={color.brand} />
-            <Text style={styles.sheetHint}>Getting distance & fare…</Text>
+            <Text style={styles.sheetHint}>Finding best route & fares…</Text>
           </View>
         ) : error && !quote ? (
           <View style={styles.sheetLoading}>
@@ -133,9 +138,30 @@ export function RideQuoteScreen() {
           </View>
         ) : quote && selected ? (
           <>
+            <View style={styles.handle} />
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filters}
+            >
+              {FILTERS.map((item) => {
+                const on = filter === item;
+                return (
+                  <Pressable
+                    key={item}
+                    onPress={() => setFilter(item)}
+                    style={[styles.filterChip, on && styles.filterChipOn]}
+                  >
+                    <Text style={[styles.filterText, on && styles.filterTextOn]}>{item}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
             <Text style={styles.meta}>
               {quote.distanceKm.toFixed(1)} km · ~{quote.durationMin} min
             </Text>
+
             <ScrollView
               style={styles.vehicleScroll}
               showsVerticalScrollIndicator={false}
@@ -143,40 +169,51 @@ export function RideQuoteScreen() {
             >
               <VehicleRow
                 selected={vehicle === 'bike'}
-                title="Bike"
-                subtitle={`Quick bike · ${quote.quotes.bike.durationMin} mins away`}
+                title="Bike Direct"
+                tagline="Quick Bike rides"
+                eta={`${quote.quotes.bike.durationMin} mins away`}
+                dropAt={`Drop ${dropClock(quote.quotes.bike.durationMin)}`}
+                seats="1"
                 fare={quote.quotes.bike.fareInr}
-                icon={require('@/assets/images/bike-icon.jpg')}
+                icon={require('@/assets/images/fleet/bike.png')}
                 onPress={() => setVehicle('bike')}
               />
               <VehicleRow
                 selected={vehicle === 'auto'}
                 title="Auto"
-                subtitle={`Roomy auto · ${quote.quotes.auto.durationMin} mins away`}
+                tagline="Comfortable auto rides"
+                eta={`${quote.quotes.auto.durationMin} mins away`}
+                dropAt={`Drop ${dropClock(quote.quotes.auto.durationMin)}`}
+                seats="3"
                 fare={quote.quotes.auto.fareInr}
-                icon={require('@/assets/images/auto-icon.jpg')}
+                icon={require('@/assets/images/fleet/auto.png')}
                 onPress={() => setVehicle('auto')}
               />
             </ScrollView>
 
             {error ? <Text style={styles.errorInline}>{error}</Text> : null}
 
-            <View style={styles.bookRow}>
-              <View style={styles.cashChip}>
+            <View style={styles.footer}>
+              <Pressable style={styles.cashBtn} accessibilityRole="button">
                 <Ionicons name="cash-outline" size={18} color="#159447" />
                 <Text style={styles.cashText}>Cash</Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Book now"
-                disabled={booking}
-                onPress={() => { void book(); }}
-                style={({ pressed }) => [styles.bookBtn, pressed && styles.dim, booking && styles.disabled]}
-              >
-                <Text style={styles.bookText}>
-                  {booking ? 'Booking…' : `Book ${vehicle === 'bike' ? 'Bike' : 'Auto'} · ₹${selected.fareInr}`}
-                </Text>
+                <Ionicons name="chevron-down" size={14} color="#6B7280" />
               </Pressable>
+
+              <View style={styles.bookWrap}>
+                <View style={styles.bargainBadge}>
+                  <Text style={styles.bargainText}>Ride at ₹{bargainFare}</Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Book now"
+                  disabled={booking}
+                  onPress={() => { void book(); }}
+                  style={({ pressed }) => [styles.bookBtn, pressed && styles.dim, booking && styles.disabled]}
+                >
+                  <Text style={styles.bookText}>{booking ? 'Booking…' : 'Book Now'}</Text>
+                </Pressable>
+              </View>
             </View>
           </>
         ) : null}
@@ -188,14 +225,20 @@ export function RideQuoteScreen() {
 function VehicleRow({
   selected,
   title,
-  subtitle,
+  tagline,
+  eta,
+  dropAt,
+  seats,
   fare,
   icon,
   onPress,
 }: {
   selected: boolean;
   title: string;
-  subtitle: string;
+  tagline: string;
+  eta: string;
+  dropAt: string;
+  seats: string;
   fare: number;
   icon: number;
   onPress: () => void;
@@ -211,10 +254,19 @@ function VehicleRow({
         pressed && styles.dim,
       ]}
     >
-      <Image source={icon} style={styles.vehicleIcon} resizeMode="contain" />
+      <View style={styles.vehicleIconWrap}>
+        <Image source={icon} style={styles.vehicleIcon} resizeMode="contain" />
+      </View>
       <View style={styles.vehicleCopy}>
         <Text style={styles.vehicleTitle}>{title}</Text>
-        <Text style={styles.vehicleSub}>{subtitle}</Text>
+        <Text style={styles.vehicleTag}>{tagline}</Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.metaItem}>{eta}</Text>
+          <Text style={styles.metaDot}>·</Text>
+          <Text style={styles.metaItem}>{dropAt}</Text>
+          <Ionicons name="person-outline" size={12} color="#6B7280" style={styles.seatIcon} />
+          <Text style={styles.metaItem}>{seats}</Text>
+        </View>
       </View>
       <Text style={styles.vehicleFare}>₹{fare}</Text>
     </Pressable>
@@ -222,13 +274,13 @@ function VehicleRow({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#D5DDD9' },
+  root: { flex: 1, backgroundColor: '#E8EEE9' },
   mapLayer: { ...StyleSheet.absoluteFill },
   mapPlaceholder: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#D5DDD9',
+    backgroundColor: '#E8EEE9',
   },
   topBar: {
     position: 'absolute',
@@ -236,7 +288,7 @@ const styles = StyleSheet.create({
     right: spacing.md,
     zIndex: 5,
   },
-  backBtn: {
+  roundBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -249,50 +301,30 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
   },
-  labels: {
-    position: 'absolute',
-    top: '18%',
-    left: spacing.md,
-    right: spacing.md,
-    gap: 8,
-  },
-  labelPill: {
-    alignSelf: 'flex-start',
-    maxWidth: '78%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-  },
-  labelPickup: { marginLeft: 8 },
-  labelDrop: { alignSelf: 'flex-end', marginRight: 8 },
-  labelText: { fontSize: 13, fontWeight: '600', color: '#1A237E', maxWidth: 180 },
-  dotGreen: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#159447' },
-  dotOrange: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#E67E22' },
   sheet: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    maxHeight: '52%',
+    maxHeight: '56%',
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
     paddingHorizontal: spacing.md,
-    paddingTop: 14,
-    elevation: 10,
+    paddingTop: 8,
+    elevation: 12,
     shadowColor: '#000',
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: -3 },
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 42,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    marginBottom: 10,
   },
   sheetLoading: {
     alignItems: 'center',
@@ -301,13 +333,31 @@ const styles = StyleSheet.create({
     paddingVertical: 28,
   },
   sheetHint: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
+  filters: {
+    gap: 8,
+    paddingBottom: 10,
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  filterChipOn: {
+    backgroundColor: '#111827',
+    borderColor: '#111827',
+  },
+  filterText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  filterTextOn: { color: '#FFFFFF' },
   meta: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#6B7280',
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  vehicleScroll: { maxHeight: 180 },
+  vehicleScroll: { maxHeight: 210 },
   vehicleList: { gap: 10, paddingBottom: 8 },
   vehicleRow: {
     flexDirection: 'row',
@@ -318,43 +368,69 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: '#E5E7EB',
-    backgroundColor: '#FAFBFC',
+    backgroundColor: '#FFFFFF',
   },
   vehicleSelected: {
-    borderColor: '#159447',
-    backgroundColor: '#F0FDF4',
+    borderColor: '#2563EB',
+    backgroundColor: '#F8FBFF',
   },
-  vehicleIcon: { width: 56, height: 40 },
+  vehicleIconWrap: {
+    width: 72,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  vehicleIcon: {
+    width: 72,
+    height: 48,
+    backgroundColor: 'transparent',
+  },
   vehicleCopy: { flex: 1, gap: 2 },
-  vehicleTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  vehicleSub: { fontSize: 12, fontWeight: '500', color: '#6B7280' },
+  vehicleTitle: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  vehicleTag: { fontSize: 12, fontWeight: '500', color: '#6B7280' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 2 },
+  metaItem: { fontSize: 11, fontWeight: '600', color: '#6B7280' },
+  metaDot: { marginHorizontal: 4, color: '#9CA3AF' },
+  seatIcon: { marginLeft: 6, marginRight: 2 },
   vehicleFare: { fontSize: 18, fontWeight: '800', color: '#111827' },
-  bookRow: {
+  footer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: 10,
-    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E7EB',
   },
-  cashChip: {
+  cashBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
+    gap: 4,
+    paddingHorizontal: 10,
     paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#D0D5DD',
+    borderRadius: 10,
   },
   cashText: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  bookBtn: {
-    flex: 1,
-    height: 48,
-    borderRadius: 12,
+  bookWrap: { flex: 1, position: 'relative' },
+  bargainBadge: {
+    position: 'absolute',
+    top: -10,
+    alignSelf: 'center',
+    zIndex: 2,
     backgroundColor: '#159447',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  bargainText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
+  bookBtn: {
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: '#F5C518',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bookText: { fontSize: 15, fontWeight: '800', color: '#FFFFFF' },
+  bookText: { fontSize: 16, fontWeight: '800', color: '#111827' },
   errorText: { fontSize: 14, fontWeight: '600', color: '#B91C1C', textAlign: 'center' },
   errorInline: { fontSize: 12, fontWeight: '600', color: '#B91C1C', marginBottom: 4 },
   retryBtn: {

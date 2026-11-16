@@ -479,7 +479,7 @@ export function RequestScreen() {
             <View style={styles.serviceTile} accessible accessibilityLabel="Auto">
               <View style={styles.serviceIconBox}>
                 <Image
-                  source={require('@/assets/images/auto-icon.jpg')}
+                  source={require('@/assets/images/fleet/auto.png')}
                   resizeMode="contain"
                   style={styles.serviceIcon}
                   accessible={false}
@@ -490,7 +490,7 @@ export function RequestScreen() {
             <View style={styles.serviceTile} accessible accessibilityLabel="Bike">
               <View style={styles.serviceIconBox}>
                 <Image
-                  source={require('@/assets/images/bike-icon.jpg')}
+                  source={require('@/assets/images/fleet/bike.png')}
                   resizeMode="contain"
                   style={styles.serviceIcon}
                   accessible={false}

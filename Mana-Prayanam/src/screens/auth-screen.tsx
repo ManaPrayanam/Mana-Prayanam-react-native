@@ -9,6 +9,7 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { checkMobile } from '@/api/auth';
 import { errorMessage } from '@/api/client';
+import { warmLocation } from '@/location/warm-location';
 import { AuthHeader } from '@/components/auth-header';
 import { AuthField } from '@/components/auth-field';
 import { Feedback } from '@/components/ridego-ui';
@@ -21,10 +22,13 @@ export function AuthScreen() {
   const insets = useSafeAreaInsets();
   const keyboardProgress = useSharedValue(0);
   const [mobile, setMobile] = useState('');
-  const [remember, setRemember] = useState(true);
   const [mobileError, setMobileError] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void warmLocation();
+  }, []);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -70,7 +74,7 @@ export function AuthScreen() {
       Keyboard.dismiss();
       router.push({
         pathname: '/verify-otp',
-        params: { mobile, remember: remember ? '1' : '0', mode: 'login' },
+        params: { mobile, remember: '1', mode: 'login' },
       });
     } catch (cause) {
       setError(errorMessage(cause));
@@ -108,7 +112,7 @@ export function AuthScreen() {
         </Animated.View>
         <View style={[styles.sheet, styles.loginSheetFill]}>
           <View style={styles.loginBody}>
-            <Animated.Text accessibilityRole="header" style={[styles.heading, headingStyle]}>
+            <Animated.Text accessibilityRole="header" style={[styles.heading, headingStyle, styles.blackText]}>
               Welcome to Mana Prayanam
             </Animated.Text>
             <AuthField label="Mobile number (+91)" value={mobile}
@@ -119,29 +123,25 @@ export function AuthScreen() {
               }}
               keyboardType="phone-pad" autoComplete="tel-national"
               placeholder="10-digit mobile number" editable={!busy} error={mobileError} />
-            {Platform.OS !== 'web' && <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: remember }}
-              disabled={busy} onPress={() => setRemember(!remember)} style={styles.remember}>
-              <Text style={styles.checkbox}>{remember ? '✓' : ''}</Text><Text style={styles.note}>Remember me</Text>
-            </Pressable>}
             <Feedback error={error} loading={busy} />
             <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }}
               disabled={busy} onPress={submit} style={[styles.submit, busy && styles.dim]}>
               <Text style={styles.submitText}>Log in</Text>
             </Pressable>
             <View style={{ alignItems: 'center' }}>
-              <Text style={styles.note}>New to Mana Prayanam?</Text>
+              <Text style={styles.greyText}>New to Mana Prayanam?</Text>
               <Pressable accessibilityRole="link" disabled={busy}
                 onPress={() => router.push('/register')} style={styles.footer}>
-                <Text style={styles.link}>Create an account</Text>
+                <Text style={[styles.link, styles.blackText]}>Create an account</Text>
               </Pressable>
             </View>
           </View>
 
           <Text style={styles.legal}>
             By continuing, you agree to our{' '}
-            <Text style={styles.legalLink} onPress={() => openTerms('terms')}>Terms of Service</Text>
+            <Text style={[styles.legalLink, styles.blackText]} onPress={() => openTerms('terms')}>Terms of Service</Text>
             {' '}and{' '}
-            <Text style={styles.legalLink} onPress={() => openTerms('privacy')}>Privacy Policy</Text>.
+            <Text style={[styles.legalLink, styles.blackText]} onPress={() => openTerms('privacy')}>Privacy Policy</Text>.
           </Text>
         </View>
       </ScrollView>

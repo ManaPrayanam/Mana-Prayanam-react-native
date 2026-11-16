@@ -135,7 +135,7 @@ export function OtpVerifyScreen() {
           <Text style={authStyles.submitText}>Verify & continue</Text>
         </Pressable>
         <Pressable accessibilityRole="button" disabled={busy} onPress={() => router.back()} style={authStyles.footer}>
-          <Text style={authStyles.link}>Change mobile number</Text>
+          <Text style={[authStyles.link, authStyles.blackText]}>Change mobile number</Text>
         </Pressable>
       </View>
     </KeyboardAvoidingView>

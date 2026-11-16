@@ -1,35 +1,76 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import * as Location from 'expo-location';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { router, useFocusEffect, useIsFocused } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Dimensions,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
+  Image,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { reverseGeocode, type MapCoords } from '@/api/geocode';
-import { requestRide } from '@/api/rides';
-import { errorMessage } from '@/api/client';
-import { useSession } from '@/auth/session';
 import { LocationMap, type LocationMapHandle } from '@/components/location-map';
 import { MapBottomSheet } from '@/components/map-bottom-sheet';
-import { Feedback } from '@/components/ridego-ui';
+import {
+  clearRideDraft,
+  getRideDestination,
+  setRideDestination,
+  subscribeRideDestination,
+} from '@/location/ride-draft';
 import { color, radius, spacing } from '@/theme/brand';
+import { peekLocation, warmLocation } from '@/location/warm-location';
+import { log } from '@/utils/log';
 
 const MOVE_THRESHOLD_M = 25;
-const WINDOW_H = Dimensions.get('window').height;
-const SCREEN_H = Dimensions.get('screen').height;
-const SHEET_COLLAPSED = Math.round(WINDOW_H * 0.34);
-// Pin sits in the middle of the visible map above the collapsed sheet
-const PIN_Y_RATIO = (1 - SHEET_COLLAPSED / WINDOW_H) / 2;
+const SCREEN_W = Dimensions.get('window').width;
+const SCREEN_H = Dimensions.get('window').height;
+const SHEET_MID_H = Math.round(SCREEN_H * 0.68);
+const FAB_GAP = 22;
+const PROMO_W = SCREEN_W - spacing.md * 2;
+/** Snap cover ratios: bottom pad + focus Y (mid of visible map) */
+const SHEET_COVER = [
+  { pad: 0.48, focus: 0.24 },
+  { pad: 0.68, focus: 0.16 },
+  { pad: 0.9, focus: 0.05 },
+] as const;
+/** 16:9 so banner text isn’t cropped by cover */
+const PROMO_H = Math.round(PROMO_W * (9 / 16));
+const PROMO_AUTO_MS = 3500;
+
+const PROMOS = [
+  {
+    source: require('@/assets/images/promo-bike-clear.jpg'),
+    label: 'Mana Prayanam bike deal. Short trips flat fare. Ride now.',
+  },
+  {
+    source: require('@/assets/images/promo-auto-evening.jpg'),
+    label: 'Mana Prayanam evening auto. Extra room for family trips. Book auto.',
+  },
+  {
+    source: require('@/assets/images/promo-weekend-rides.jpg'),
+    label: 'Mana Prayanam weekend rides. Rain or shine. Book now.',
+  },
+] as const;
+
+const PAST_RIDES = [
+  {
+    id: 'past-1',
+    title: 'Indiranagar 100 Feet Rd',
+    address: '100 Feet Road, HAL 2nd Stage, Indiranagar, Bengaluru',
+  },
+  {
+    id: 'past-2',
+    title: 'HSR Layout Sector 2',
+    address: '27th Main Rd, Sector 2, HSR Layout, Bengaluru',
+  },
+] as const;
 
 function distanceMeters(a: MapCoords, b: MapCoords) {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -45,80 +86,161 @@ function distanceMeters(a: MapCoords, b: MapCoords) {
 }
 
 export function RequestScreen() {
-  const { authenticated } = useSession();
+  const focused = useIsFocused();
   const mapRef = useRef<LocationMapHandle>(null);
   const geocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addressRequest = useRef(0);
   const followGps = useRef(true);
   const lastGps = useRef<MapCoords | null>(null);
   const applyingGpsMove = useRef(false);
   const editingDestination = useRef(false);
 
-  const [gpsOrigin, setGpsOrigin] = useState<MapCoords | null>(null);
+  const [gpsOrigin, setGpsOrigin] = useState<MapCoords | null>(() => peekLocation());
   const [locating, setLocating] = useState(true);
   const [pickup, setPickup] = useState('');
-  const [destination, setDestination] = useState('');
+  const [destination, setDestination] = useState(() => getRideDestination());
   const [geocoding, setGeocoding] = useState(false);
   const [locationHint, setLocationHint] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+  const [promoIndex, setPromoIndex] = useState(0);
+  const promoScrollRef = useRef<{ scrollTo: (o: { x: number; animated?: boolean }) => void } | null>(null);
+  const promoIndexRef = useRef(0);
+  const sheetPosition = useSharedValue(SCREEN_H - SHEET_MID_H);
+  const pageHeight = useSharedValue(SCREEN_H);
+  const pageLaidOut = useRef(false);
+
+  const onPageLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    // Lock first stable height — ignore keyboard shrink/expand (that bounced the sheet).
+    if (!pageLaidOut.current && h > 0) {
+      pageLaidOut.current = true;
+      pageHeight.value = h;
+      return;
+    }
+    if (h > pageHeight.value) {
+      pageHeight.value = h;
+    }
+  }, [pageHeight]);
+
+  const fabStyle = useAnimatedStyle(() => {
+    const bottom = pageHeight.value - sheetPosition.value + FAB_GAP;
+    return { bottom: bottom > FAB_GAP ? bottom : FAB_GAP };
+  });
+
+  const syncMapCover = useCallback((_index?: number) => {
+    // Keep map focus on the fixed pin (mid snap). Avoid jumping camera on every snap.
+    const cover = SHEET_COVER[1];
+    mapRef.current?.setSheetCover(cover.pad, cover.focus);
+  }, []);
 
   useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, () => setKeyboardOpen(true));
-    const hide = Keyboard.addListener(hideEvent, () => setKeyboardOpen(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
+    return subscribeRideDestination(() => {
+      setDestination(getRideDestination());
+      editingDestination.current = false;
+    });
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      setDestination(getRideDestination());
+      editingDestination.current = false;
+      // Sheet remounts at mid snap — keep My location visible.
+      setSheetExpanded(false);
+      sheetPosition.value = SCREEN_H - SHEET_MID_H;
+    }, [sheetPosition]),
+  );
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      const next = (promoIndexRef.current + 1) % PROMOS.length;
+      promoIndexRef.current = next;
+      setPromoIndex(next);
+      promoScrollRef.current?.scrollTo({ x: next * PROMO_W, animated: true });
+    }, PROMO_AUTO_MS);
+    return () => clearInterval(tick);
+  }, []);
+
+  const onPromoScrollEnd = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const next = Math.round(e.nativeEvent.contentOffset.x / PROMO_W);
+    const clamped = Math.max(0, Math.min(PROMOS.length - 1, next));
+    promoIndexRef.current = clamped;
+    setPromoIndex(clamped);
   }, []);
 
   const lookupAddress = useCallback((next: MapCoords) => {
     if (geocodeTimer.current) clearTimeout(geocodeTimer.current);
+    const request = ++addressRequest.current;
     setGeocoding(true);
     geocodeTimer.current = setTimeout(async () => {
       try {
         const address = await reverseGeocode(next);
+        if (request !== addressRequest.current) return;
         setPickup(address);
         setLocationHint('');
       } catch {
+        if (request !== addressRequest.current) return;
         setPickup(`${next.lat.toFixed(5)}, ${next.lng.toFixed(5)}`);
         setLocationHint('Address lookup failed — you can still request with coordinates.');
       } finally {
-        setGeocoding(false);
+        if (request === addressRequest.current) setGeocoding(false);
       }
     }, 500);
   }, []);
 
+  const mapMounted = useRef(false);
+
   const applyGps = useCallback((next: MapCoords, recenter: boolean) => {
     lastGps.current = next;
-    setGpsOrigin((prev) => prev ?? next);
+    // Keep map `initial` stable — only seed once so LocationMap does not remount/loop
+    setGpsOrigin((prev) => {
+      if (prev && distanceMeters(prev, next) < 1) return prev;
+      // After first paint, prefer goTo over changing the prop
+      if (mapMounted.current) return prev;
+      return next;
+    });
     setLocating(false);
     setLocationHint('');
-    if (recenter && followGps.current && !editingDestination.current) {
+    if (mapMounted.current && recenter && followGps.current && !editingDestination.current) {
       applyingGpsMove.current = true;
-      mapRef.current?.goTo(next, 17);
-      setTimeout(() => { applyingGpsMove.current = false; }, 400);
+      mapRef.current?.goTo(next, 16);
+      setTimeout(() => { applyingGpsMove.current = false; }, 500);
     }
     lookupAddress(next);
   }, [lookupAddress]);
 
   const onCenterChange = useCallback((next: MapCoords) => {
-    lookupAddress(next);
     if (applyingGpsMove.current) return;
+    lookupAddress(next);
     const gps = lastGps.current;
     if (gps && distanceMeters(gps, next) > MOVE_THRESHOLD_M) {
       followGps.current = false;
     }
   }, [lookupAddress]);
 
+  const onMapReady = useCallback(() => {
+    log('Map', 'map ready');
+    mapMounted.current = true;
+    syncMapCover(1);
+    const target = lastGps.current ?? peekLocation();
+    if (target) {
+      applyingGpsMove.current = true;
+      mapRef.current?.goTo(target, 16);
+      setTimeout(() => { applyingGpsMove.current = false; }, 500);
+    }
+  }, [syncMapCover]);
+
   const goMyLocation = useCallback(async () => {
+    log('Map', 'My location pressed', { hasCached: Boolean(lastGps.current) });
     followGps.current = true;
     setLocationHint('');
 
     if (lastGps.current) {
-      applyGps(lastGps.current, true);
+      applyingGpsMove.current = true;
+      mapRef.current?.goTo(lastGps.current, 16);
+      setTimeout(() => {
+        applyingGpsMove.current = false;
+      }, 80);
+      lookupAddress(lastGps.current);
       setLocating(false);
       return;
     }
@@ -130,14 +252,13 @@ export function RequestScreen() {
         ? { status }
         : await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
-        setGpsOrigin(null);
         setLocationHint('Location permission is required.');
         return;
       }
 
       const cached = await Location.getLastKnownPositionAsync({
-        maxAge: 60_000,
-        requiredAccuracy: 150,
+        maxAge: 120_000,
+        requiredAccuracy: 500,
       });
       if (cached) {
         applyGps(
@@ -148,7 +269,7 @@ export function RequestScreen() {
       }
 
       const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Low,
+        accuracy: Location.Accuracy.Lowest,
       });
       applyGps(
         { lat: pos.coords.latitude, lng: pos.coords.longitude },
@@ -159,7 +280,7 @@ export function RequestScreen() {
     } finally {
       setLocating(false);
     }
-  }, [applyGps]);
+  }, [applyGps, lookupAddress]);
 
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
@@ -167,28 +288,28 @@ export function RequestScreen() {
 
     (async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
+        const known = peekLocation();
+        if (known) applyGps(known, true);
+
+        const warmed = await warmLocation();
         if (cancelled) return;
-        if (status !== 'granted') {
+        if (!warmed) {
           setLocating(false);
           setLocationHint('Location permission is required.');
           return;
         }
+        log('Map', 'boot GPS');
+        applyGps(warmed, true);
 
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        if (cancelled) return;
-        applyGps(
-          { lat: pos.coords.latitude, lng: pos.coords.longitude },
-          true,
-        );
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (cancelled || status !== 'granted') return;
 
+        // 3) Keep watching for updates
         subscription = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.Balanced,
             distanceInterval: MOVE_THRESHOLD_M,
-            timeInterval: 3000,
+            timeInterval: 4000,
           },
           (update) => {
             if (cancelled) return;
@@ -212,144 +333,242 @@ export function RequestScreen() {
     return () => {
       cancelled = true;
       subscription?.remove();
+      addressRequest.current += 1;
       if (geocodeTimer.current) clearTimeout(geocodeTimer.current);
     };
   }, [applyGps]);
 
-  async function submit() {
-    setBusy(true);
-    setError('');
-    try {
-      const ride = await authenticated((token) => requestRide(token, pickup, destination));
-      setDestination('');
-      router.push({ pathname: '/ride/[id]', params: { id: ride.id } });
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const mapPinRatio = useMemo(() => PIN_Y_RATIO, []);
-
   return (
-    <View style={styles.page}>
-      <View style={styles.mapLayer} pointerEvents={keyboardOpen ? 'none' : 'auto'}>
+    <View style={styles.page} onLayout={onPageLayout}>
+      <View style={styles.mapLayer} pointerEvents="auto">
         {gpsOrigin ? (
           <LocationMap
             ref={mapRef}
             initial={gpsOrigin}
             onCenterChange={onCenterChange}
-            showMyLocationButton={false}
-            pinYRatio={mapPinRatio}
-            locked={keyboardOpen}
+            onReady={onMapReady}
           />
         ) : (
           <View style={styles.mapPlaceholder}>
-            {locating ? (
-              <ActivityIndicator color={color.brand} size="large" />
-            ) : (
-              <>
-                <Text style={styles.placeholderText}>
-                  {locationHint || 'Waiting for your current location'}
-                </Text>
-                <Pressable style={styles.retryBtn} onPress={() => { void goMyLocation(); }}>
-                  <Text style={styles.retryText}>Try again</Text>
-                </Pressable>
-              </>
-            )}
+            <Text style={styles.placeholderText} accessibilityLiveRegion="polite">
+              {locating ? 'Finding your location…' : locationHint || 'Tap My location to load the map.'}
+            </Text>
           </View>
         )}
+
+        <View
+          pointerEvents="none"
+          style={styles.pickupPinWrap}
+          accessible
+          accessibilityLabel="Pickup pin"
+        >
+          <View style={styles.pickupPin}>
+            <View style={styles.pickupPinHead}>
+              <View style={styles.pickupPinDot} />
+            </View>
+            <View style={styles.pickupPinPoint} />
+          </View>
+          <View style={styles.pickupPinShadow} />
+        </View>
       </View>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="My location"
-        onPress={() => { void goMyLocation(); }}
-        style={[styles.fab, { bottom: SHEET_COLLAPSED + 12 }]}
-      >
-        <Ionicons name="locate" size={22} color={color.brand} />
-      </Pressable>
+      {!sheetExpanded ? (
+        <Animated.View style={[styles.fabWrap, fabStyle]} pointerEvents="box-none">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="My location"
+            onPress={() => { void goMyLocation(); }}
+            style={({ pressed }) => [styles.fab, pressed && styles.dim]}
+          >
+            <Ionicons name="locate" size={22} color={color.brand} />
+          </Pressable>
+        </Animated.View>
+      ) : null}
 
-      <KeyboardAvoidingView
-        pointerEvents="box-none"
-        style={StyleSheet.absoluteFill}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      {focused ? (
+      <MapBottomSheet
+        contentContainerStyle={styles.sheetContent}
+        onExpandedChange={setSheetExpanded}
+        animatedPosition={sheetPosition}
       >
-        <View pointerEvents="box-none" style={styles.sheetViewport}>
-          <MapBottomSheet collapsedHeight={SHEET_COLLAPSED}>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="none"
-              contentContainerStyle={styles.sheetContent}
-              showsVerticalScrollIndicator={false}
-              bounces={false}
+        <View style={styles.pastRides}>
+          {PAST_RIDES.map((ride, index) => (
+            <View
+              key={ride.id}
+              style={[styles.pastRideRow, index < PAST_RIDES.length - 1 && styles.pastRideDivider]}
             >
-              <View style={styles.pickupRow}>
-                <View style={styles.pickupDot} />
-                <View style={styles.pickupCopy}>
-                  <Text style={styles.pickupLabel}>Pickup</Text>
-                  <Text style={styles.pickupAddress} numberOfLines={2}>
-                    {geocoding && !pickup
-                      ? 'Finding address…'
-                      : pickup || (locating ? 'Getting your location…' : 'Enable location to set pickup')}
-                  </Text>
-                  {!!locationHint && <Text style={styles.hint}>{locationHint}</Text>}
-                </View>
+              <Ionicons name="time-outline" size={22} color="#6B7280" style={styles.pastRideIcon} />
+              <View style={styles.pastRideCopy}>
+                <Text style={styles.pastRideTitle} numberOfLines={1}>{ride.title}</Text>
+                <Text style={styles.pastRideAddress} numberOfLines={1}>{ride.address}</Text>
               </View>
-
-              <View style={styles.destField}>
-                <Text style={styles.destLabel}>Destination</Text>
-                <TextInput
-                  value={destination}
-                  onChangeText={setDestination}
-                  placeholder="Street address or landmark"
-                  placeholderTextColor={color.muted}
-                  style={styles.destInput}
-                  maxLength={300}
-                  accessibilityLabel="Destination"
-                  onFocus={() => { editingDestination.current = true; }}
-                  onBlur={() => { editingDestination.current = false; }}
-                  submitBehavior="blurAndSubmit"
-                  returnKeyType="done"
-                />
-              </View>
-
-              <Feedback error={error} loading={busy} />
-
               <Pressable
                 accessibilityRole="button"
-                disabled={busy || !pickup.trim() || !destination.trim()}
-                onPress={submit}
-                style={({ pressed }) => [
-                  styles.requestBtn,
-                  (busy || !pickup.trim() || !destination.trim()) && styles.requestDisabled,
-                  pressed && styles.dim,
-                ]}
+                accessibilityLabel={`Reassign ride to ${ride.title}`}
+                hitSlop={10}
+                onPress={() => {
+                  editingDestination.current = true;
+                  setRideDestination(ride.title);
+                  setDestination(ride.title);
+                }}
+                style={({ pressed }) => [styles.reassignBtn, pressed && styles.dim]}
               >
-                <Text style={styles.requestText}>Request ride</Text>
+                <Ionicons name="refresh" size={22} color="#159447" />
               </Pressable>
-            </ScrollView>
-          </MapBottomSheet>
+            </View>
+          ))}
         </View>
-      </KeyboardAvoidingView>
+
+        <View style={styles.pickupRow}>
+          <View style={styles.pickupDot} />
+          <View style={styles.pickupCopy}>
+            <Text style={styles.pickupLabel}>Pickup</Text>
+            <Text style={styles.pickupAddress} numberOfLines={2}>
+              {geocoding && !pickup
+                ? 'Finding address…'
+                : pickup || (locating ? 'Getting your location…' : 'Enable location to set pickup')}
+            </Text>
+            {!!locationHint && <Text style={styles.hint}>{locationHint}</Text>}
+          </View>
+        </View>
+
+        <View style={styles.whereToRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Where to?"
+            onPress={() => {
+              editingDestination.current = true;
+              router.push({
+                pathname: '/destination',
+                params: {
+                  pickup: pickup || 'Current location',
+                  destination,
+                },
+              });
+            }}
+            style={({ pressed }) => [styles.whereToBtn, pressed && styles.dim]}
+          >
+            <Ionicons name="search" size={18} color="#6B7280" />
+            <Text
+              style={[styles.whereToText, !destination && styles.whereToPlaceholder]}
+              numberOfLines={1}
+            >
+              {destination || 'Where to?'}
+            </Text>
+          </Pressable>
+          {destination ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Clear destination"
+              hitSlop={8}
+              onPress={() => {
+                editingDestination.current = true;
+                clearRideDraft();
+                setDestination('');
+              }}
+              style={({ pressed }) => [styles.whereToClear, pressed && styles.dim]}
+            >
+              <Ionicons name="close-circle" size={22} color="#9AA0B4" />
+            </Pressable>
+          ) : null}
+        </View>
+
+        <View style={styles.services}>
+          <Text accessibilityRole="header" style={styles.serviceTitle}>Service</Text>
+          <View style={styles.serviceRow}>
+            <View style={styles.serviceTile} accessible accessibilityLabel="Auto">
+              <View style={styles.serviceIconBox}>
+                <Image
+                  source={require('@/assets/images/auto-icon.jpg')}
+                  resizeMode="contain"
+                  style={styles.serviceIcon}
+                  accessible={false}
+                />
+              </View>
+              <Text style={styles.serviceLabel}>Auto</Text>
+            </View>
+            <View style={styles.serviceTile} accessible accessibilityLabel="Bike">
+              <View style={styles.serviceIconBox}>
+                <Image
+                  source={require('@/assets/images/bike-icon.jpg')}
+                  resizeMode="contain"
+                  style={styles.serviceIcon}
+                  accessible={false}
+                />
+              </View>
+              <Text style={styles.serviceLabel}>Bike</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.promoWrap}>
+          <ScrollView
+            ref={promoScrollRef as never}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            decelerationRate="fast"
+            snapToInterval={PROMO_W}
+            snapToAlignment="start"
+            disableIntervalMomentum
+            onMomentumScrollEnd={onPromoScrollEnd}
+            style={styles.promoPager}
+          >
+            {PROMOS.map((promo) => (
+              <Image
+                key={promo.label}
+                accessible
+                accessibilityLabel={promo.label}
+                source={promo.source}
+                resizeMode="cover"
+                style={styles.promoBanner}
+              />
+            ))}
+          </ScrollView>
+          <View style={styles.promoDots} accessibilityElementsHidden>
+            {PROMOS.map((promo, i) => (
+              <View
+                key={promo.label}
+                style={[styles.promoDot, i === promoIndex && styles.promoDotActive]}
+              />
+            ))}
+          </View>
+        </View>
+      </MapBottomSheet>
+      ) : (
+        <View style={styles.sheetFreeze} pointerEvents="none" />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: color.tint },
-  sheetViewport: { flex: 1 },
-  // Fixed to screen height so keyboard open does not shrink/jump the map
-  mapLayer: {
+  page: {
+    flex: 1,
+    // Fixed height so keyboard open/close on destination cannot shrink this layout
+    // and bounce the bottom sheet.
+    height: SCREEN_H,
+    backgroundColor: color.tint,
+  },
+  sheetFreeze: {
     position: 'absolute',
-    top: 0,
     left: 0,
     right: 0,
-    height: SCREEN_H,
+    bottom: 0,
+    height: SHEET_MID_H,
+    backgroundColor: color.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    zIndex: 20,
+    elevation: 20,
+  },
+  mapLayer: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: color.tint,
+    zIndex: 1,
   },
   mapPlaceholder: {
-    flex: 1,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
@@ -362,18 +581,63 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 21,
   },
-  retryBtn: {
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.field,
-    backgroundColor: color.brand,
+  pickupPinWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '16%',
+    alignItems: 'center',
+    transform: [{ translateY: -40 }],
+    zIndex: 2,
   },
-  retryText: { color: color.surface, fontWeight: '700', fontSize: 15 },
-  fab: {
+  pickupPin: {
+    alignItems: 'center',
+  },
+  pickupPinHead: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#159447',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  pickupPinDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FFFFFF',
+  },
+  pickupPinPoint: {
+    width: 0,
+    height: 0,
+    marginTop: -2,
+    borderLeftWidth: 9,
+    borderRightWidth: 9,
+    borderTopWidth: 14,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#159447',
+  },
+  pickupPinShadow: {
+    marginTop: 2,
+    width: 14,
+    height: 5,
+    borderRadius: 7,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
+  fabWrap: {
     position: 'absolute',
     right: spacing.md,
-    zIndex: 5,
+    zIndex: 25,
+    elevation: 25,
+  },
+  fab: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -386,12 +650,48 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
   },
   sheetContent: {
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.xl,
-    gap: spacing.md,
+    gap: spacing.sm,
+    paddingBottom: 24,
+  },
+  pastRides: {
+    marginBottom: 4,
+  },
+  pastRideRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 2,
+  },
+  pastRideDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E7EB',
+  },
+  pastRideIcon: {
+    marginTop: 1,
+  },
+  pastRideCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  pastRideTitle: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  pastRideAddress: {
+    color: '#6B7280',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  reassignBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pickupRow: {
     flexDirection: 'row',
@@ -407,29 +707,94 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   pickupCopy: { flex: 1, gap: 2 },
-  pickupLabel: { color: color.muted, fontSize: 12, fontWeight: '600' },
-  pickupAddress: { color: color.ink, fontSize: 15, lineHeight: 21, fontWeight: '500' },
+  pickupLabel: { color: '#000000', fontSize: 12, fontWeight: '700' },
+  pickupAddress: { color: '#000000', fontSize: 15, lineHeight: 21, fontWeight: '600' },
   hint: { color: color.amber, fontSize: 13, lineHeight: 18 },
-  destField: { gap: spacing.xs },
-  destLabel: { color: color.ink, fontSize: 14, fontWeight: '600' },
-  destInput: {
-    color: color.ink,
-    minHeight: 50,
-    fontSize: 16,
-    paddingHorizontal: spacing.sm,
-    borderColor: color.line,
+  whereToRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  whereToBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 52,
+    paddingHorizontal: 14,
+    borderColor: '#159447',
     borderWidth: 1,
     borderRadius: radius.field,
     backgroundColor: color.surface,
   },
-  requestBtn: {
-    minHeight: 50,
-    borderRadius: radius.field,
-    backgroundColor: color.brand,
+  whereToText: {
+    flex: 1,
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  whereToPlaceholder: {
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  whereToClear: {
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  requestDisabled: { opacity: 0.45 },
-  requestText: { color: color.surface, fontSize: 16, fontWeight: '700' },
+  services: { gap: spacing.sm },
+  serviceTitle: { color: '#000000', fontSize: 16, fontWeight: '600' },
+  serviceRow: { flexDirection: 'row', gap: spacing.sm },
+  serviceTile: {
+    flex: 1,
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+  },
+  serviceIconBox: {
+    width: '100%',
+    height: 88,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#159447',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  serviceIcon: { width: 78, height: 60 },
+  serviceLabel: { color: '#000000', fontSize: 14, fontWeight: '700' },
+  promoWrap: {
+    width: '100%',
+    gap: 8,
+  },
+  promoPager: {
+    width: PROMO_W,
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
+  promoBanner: {
+    width: PROMO_W,
+    height: PROMO_H,
+    borderRadius: 24,
+  },
+  promoDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  promoDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#D0D5D2',
+  },
+  promoDotActive: {
+    width: 14,
+    backgroundColor: '#159447',
+  },
   dim: { opacity: 0.75 },
 });

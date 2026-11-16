@@ -22,6 +22,6 @@ export function AuthHeader({ title, fallback, disabled = false }: {
 const styles = StyleSheet.create({
   safeArea: { backgroundColor: color.surface, borderBottomWidth: 1, borderBottomColor: color.line },
   bar: { minHeight: 56, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
-  title: { flex: 1, color: color.ink, textAlign: 'center', fontSize: 18, fontWeight: '700' },
+  title: { flex: 1, color: '#000000', textAlign: 'center', fontSize: 18, fontWeight: '700' },
   spacer: { width: 44 },
 });

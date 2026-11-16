@@ -25,7 +25,15 @@ export default function HomeTab() {
     );
   }
 
-  if (!session) return null;
+  // While logout tears down protected routes, keep a solid boot screen
+  // instead of returning null (that caused the white flash).
+  if (!session) {
+    return (
+      <View style={styles.boot}>
+        <ActivityIndicator size="large" color={color.brand} />
+      </View>
+    );
+  }
   return session.user.role === 'driver' ? <DriverScreen /> : <RequestScreen />;
 }
 

@@ -64,15 +64,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
-    if (session) {
-      try {
-        await api.logout(session.token);
-      } catch (error) {
-        if (!(error instanceof ApiError && error.status === 401)) throw error;
-      }
-    }
-    await clearToken();
+    // Clear local session first so UI can leave protected routes immediately.
+    // Network logout runs in the background and must not block / flash the UI.
+    const token = session?.token;
+    await clearToken().catch(() => {});
     setSession(null);
+    if (token) {
+      void api.logout(token).catch(() => {});
+    }
   }
 
   const authenticated = useCallback(async <T,>(action: (token: string) => Promise<T>) => {

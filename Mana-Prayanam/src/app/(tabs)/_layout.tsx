@@ -1,60 +1,75 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
-import { Platform } from 'react-native';
-import { color } from '@/theme/brand';
+import { Platform, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const ACTIVE = color.ink;
-const INACTIVE = '#B8A878';
+const NAV_GREEN = '#159447';
+const ICON = '#FFFFFF';
+const ICON_MUTED = 'rgba(255,255,255,0.72)';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
 function TabIcon({
   focused,
-  tint,
   outline,
   filled,
 }: {
   focused: boolean;
-  tint: string;
   outline: IconName;
   filled: IconName;
 }) {
-  return <Ionicons name={focused ? filled : outline} size={22} color={tint} />;
+  return (
+    <Ionicons
+      name={focused ? filled : outline}
+      size={24}
+      color={focused ? ICON : ICON_MUTED}
+    />
+  );
 }
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
+  // Lift labels above home-indicator / system nav line
+  const bottomPad = Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 8) + 6;
+  const tabBarHeight = 52 + bottomPad;
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: ACTIVE,
-        tabBarInactiveTintColor: INACTIVE,
+        tabBarActiveTintColor: ICON,
+        tabBarInactiveTintColor: ICON_MUTED,
         tabBarLabelStyle: {
           fontSize: 11,
-          fontWeight: '500',
-          marginTop: 2,
+          fontWeight: '700',
+          marginBottom: 2,
         },
         tabBarIconStyle: {
-          marginTop: 4,
+          marginTop: 2,
+        },
+        tabBarItemStyle: {
+          paddingTop: 4,
         },
         tabBarStyle: {
-          backgroundColor: color.surface,
-          borderTopColor: color.line,
-          borderTopWidth: 1,
-          height: Platform.OS === 'ios' ? 84 : 64,
-          paddingTop: 4,
-          paddingBottom: Platform.OS === 'ios' ? 24 : 8,
+          backgroundColor: NAV_GREEN,
+          borderTopColor: NAV_GREEN,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          height: tabBarHeight,
+          paddingTop: 6,
+          paddingBottom: bottomPad,
         },
-        tabBarHideOnKeyboard: true,
+        // Keep tab bar mounted — hiding it on keyboard changes the home
+        // scene height and makes the gorhom sheet remeasure/bounce.
+        tabBarHideOnKeyboard: false,
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ focused, color: tint }) => (
-            <TabIcon focused={focused} tint={String(tint)} outline="home-outline" filled="home" />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon focused={focused} outline="home-outline" filled="home" />
           ),
         }}
       />
@@ -62,8 +77,8 @@ export default function TabsLayout() {
         name="rides"
         options={{
           title: 'Rides',
-          tabBarIcon: ({ focused, color: tint }) => (
-            <TabIcon focused={focused} tint={String(tint)} outline="car-outline" filled="car" />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon focused={focused} outline="car-outline" filled="car" />
           ),
         }}
       />
@@ -71,8 +86,8 @@ export default function TabsLayout() {
         name="wallet"
         options={{
           title: 'Wallet',
-          tabBarIcon: ({ focused, color: tint }) => (
-            <TabIcon focused={focused} tint={String(tint)} outline="wallet-outline" filled="wallet" />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon focused={focused} outline="wallet-outline" filled="wallet" />
           ),
         }}
       />
@@ -80,8 +95,8 @@ export default function TabsLayout() {
         name="support"
         options={{
           title: 'Support',
-          tabBarIcon: ({ focused, color: tint }) => (
-            <TabIcon focused={focused} tint={String(tint)} outline="headset-outline" filled="headset" />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon focused={focused} outline="headset-outline" filled="headset" />
           ),
         }}
       />
@@ -89,8 +104,8 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ focused, color: tint }) => (
-            <TabIcon focused={focused} tint={String(tint)} outline="person-outline" filled="person" />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon focused={focused} outline="person-outline" filled="person" />
           ),
         }}
       />

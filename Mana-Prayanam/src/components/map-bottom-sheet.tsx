@@ -1,105 +1,115 @@
-import { type ReactNode, useMemo } from 'react';
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import { type ReactNode, useCallback, useMemo, useRef } from 'react';
 import { Dimensions, StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { SharedValue } from 'react-native-reanimated';
 import { color } from '@/theme/brand';
 
-const SCREEN_H = Dimensions.get('window').height;
+/** Locked at first read — never follow keyboard window height changes. */
+const LOCKED_H = Dimensions.get('window').height;
 
 type Props = {
   children: ReactNode;
-  collapsedHeight?: number;
+  contentContainerStyle?: object;
+  onExpandedChange?: (expanded: boolean) => void;
+  onSnapIndexChange?: (index: number) => void;
+  animatedPosition?: SharedValue<number>;
 };
 
+/**
+ * Gorhom bottom sheet for the map home UI.
+ * Host height is locked in pixels so Android keyboard / tab-bar
+ * layout churn cannot remeasure the sheet and bounce it.
+ */
 export function MapBottomSheet({
   children,
-  collapsedHeight = Math.round(SCREEN_H * 0.34),
+  contentContainerStyle,
+  onExpandedChange,
+  onSnapIndexChange,
+  animatedPosition,
 }: Props) {
-  const insets = useSafeAreaInsets();
-  const snaps = useMemo(() => {
-    const mid = Math.round(SCREEN_H * 0.58);
-    const expanded = Math.round(SCREEN_H * 0.82) - insets.top;
-    return [collapsedHeight, mid, expanded].sort((a, b) => a - b);
-  }, [collapsedHeight, insets.top]);
+  const sheetRef = useRef<BottomSheet>(null);
 
-  const height = useSharedValue(snaps[0]);
-  const startH = useSharedValue(snaps[0]);
+  const snapPoints = useMemo(
+    () => [
+      Math.round(LOCKED_H * 0.48),
+      Math.round(LOCKED_H * 0.68),
+      Math.round(LOCKED_H * 0.9),
+    ],
+    [],
+  );
 
-  // Drag only from the handle — never react to keyboard (keeps map stable)
-  const pan = Gesture.Pan()
-    .onBegin(() => {
-      startH.value = height.value;
-    })
-    .onUpdate((e) => {
-      const next = startH.value - e.translationY;
-      const min = snaps[0];
-      const max = snaps[snaps.length - 1];
-      height.value = Math.min(max, Math.max(min, next));
-    })
-    .onEnd((e) => {
-      const projected = height.value - e.velocityY * 0.18;
-      let nearest = snaps[0];
-      let best = Math.abs(projected - snaps[0]);
-      for (let i = 1; i < snaps.length; i += 1) {
-        const d = Math.abs(projected - snaps[i]);
-        if (d < best) {
-          best = d;
-          nearest = snaps[i];
-        }
-      }
-      height.value = withSpring(nearest, { damping: 20, stiffness: 220 });
-    });
-
-  const sheetStyle = useAnimatedStyle(() => ({
-    height: height.value,
-  }));
+  const onChange = useCallback(
+    (index: number) => {
+      if (index < 0) return;
+      onSnapIndexChange?.(index);
+      onExpandedChange?.(index >= 2);
+    },
+    [onExpandedChange, onSnapIndexChange],
+  );
 
   return (
-    <Animated.View style={[styles.sheet, sheetStyle]} pointerEvents="box-none">
-      <GestureDetector gesture={pan}>
-        <View style={styles.handleWrap}>
-          <View style={styles.handle} />
-        </View>
-      </GestureDetector>
-      <View style={styles.body}>{children}</View>
-    </Animated.View>
+    // Fixed host: gorhom measures this. Must NOT shrink when the window
+    // resizes for the keyboard (Expo Go still uses adjustResize).
+    <View style={styles.host} pointerEvents="box-none" collapsable={false}>
+      <BottomSheet
+        ref={sheetRef}
+        index={1}
+        snapPoints={snapPoints}
+        onChange={onChange}
+        animatedPosition={animatedPosition}
+        animateOnMount={false}
+        enablePanDownToClose={false}
+        enableDynamicSizing={false}
+        enableOverDrag={false}
+        enableContentPanningGesture
+        // Sheet has no inputs; never chase keyboard (destination owns keypad).
+        keyboardBlurBehavior="none"
+        android_keyboardInputMode="adjustPan"
+        handleIndicatorStyle={styles.handle}
+        backgroundStyle={styles.background}
+        style={styles.sheet}
+        containerStyle={styles.container}
+      >
+        <BottomSheetScrollView
+          contentContainerStyle={contentContainerStyle}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+          overScrollMode="never"
+        >
+          {children}
+        </BottomSheetScrollView>
+      </BottomSheet>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: {
+  host: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    maxHeight: '100%',
+    height: LOCKED_H,
+    zIndex: 20,
+    elevation: 20,
+  },
+  container: {
+    flex: 1,
+  },
+  sheet: {
+    zIndex: 20,
+    elevation: 20,
+  },
+  background: {
     backgroundColor: color.surface,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: -4 },
-    elevation: 12,
-  },
-  handleWrap: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 10,
   },
   handle: {
-    width: 42,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#D0D5D4',
-  },
-  body: {
-    flex: 1,
+    width: 48,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#C8CDCC',
   },
 });

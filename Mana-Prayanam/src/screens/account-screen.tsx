@@ -16,27 +16,54 @@ export function AccountScreen() {
     setBusy(true);
     setError('');
     setMessage('');
-    try { await action(); } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
+    try {
+      await action();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
   }
 
-  return <Screen title="Profile">
-    <Card>
-      <Label>{session?.user.name}</Label>
-      <Label muted>{session?.user.email}</Label>
-      <Label muted>{session?.user.role === 'driver' ? 'Driver' : 'Rider'}</Label>
-      {session?.user.role === 'driver' && <>
-        <Field label="Driver phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" maxLength={30} />
-        <Button label="Update phone" disabled={busy || !phone.trim()} onPress={() => submit(async () => {
-          await authenticated((token) => updatePhone(token, phone));
-          setMessage('Phone updated.');
-        })} />
-      </>}
-      {message && <Label>{message}</Label>}
-      <Feedback error={error} loading={busy} />
-    </Card>
-    <Button label="Sign out" secondary disabled={busy} onPress={() => submit(async () => {
-      await signOut();
-      router.replace('/');
-    })} />
-  </Screen>;
+  return (
+    <Screen title="Profile">
+      <Card>
+        <Label>{session?.user.name}</Label>
+        <Label muted>{session?.user.email}</Label>
+        <Label muted>{session?.user.role === 'driver' ? 'Driver' : 'Rider'}</Label>
+        {session?.user.role === 'driver' && (
+          <>
+            <Field
+              label="Driver phone"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              maxLength={30}
+            />
+            <Button
+              label="Update phone"
+              disabled={busy || !phone.trim()}
+              onPress={() => submit(async () => {
+                await authenticated((token) => updatePhone(token, phone));
+                setMessage('Phone updated.');
+              })}
+            />
+          </>
+        )}
+        {message ? <Label>{message}</Label> : null}
+        <Feedback error={error} loading={busy} />
+      </Card>
+      <Button
+        label="Sign out"
+        secondary
+        disabled={busy}
+        onPress={() => submit(async () => {
+          // Clear session, then replace onto welcome in one step.
+          // Avoids blank tabs + competing navigates that flash white/black.
+          await signOut();
+          router.replace('/');
+        })}
+      />
+    </Screen>
+  );
 }

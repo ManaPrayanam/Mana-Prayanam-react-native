@@ -1,257 +1,132 @@
-import { Ionicons } from '@expo/vector-icons';
-import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef, type ComponentType, type Ref } from 'react';
-import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import WebViewDefault, { type WebViewMessageEvent } from 'react-native-webview';
-import { color, spacing } from '@/theme/brand';
+import { forwardRef, useImperativeHandle, useRef, useState, type ComponentType, type Ref } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import NativeWebView from 'react-native-webview';
+import type { MapCoords } from '@/api/geocode';
 
-type WebViewLike = {
-  injectJavaScript: (script: string) => void;
-};
-
-type WebViewComponentProps = {
-  ref?: Ref<WebViewLike>;
-  originWhitelist?: string[];
+type MapWebViewHandle = { injectJavaScript: (script: string) => void };
+const WebView = NativeWebView as unknown as ComponentType<{
+  ref?: Ref<MapWebViewHandle>;
   source: { html: string };
-  onMessage: (event: WebViewMessageEvent) => void;
-  style?: StyleProp<ViewStyle>;
-  javaScriptEnabled?: boolean;
-  domStorageEnabled?: boolean;
-  scrollEnabled?: boolean;
-  overScrollMode?: 'never' | 'always' | 'content';
-  setSupportMultipleWindows?: boolean;
-  mixedContentMode?: 'always' | 'never' | 'compatibility';
-  pointerEvents?: 'none' | 'auto' | 'box-none' | 'box-only';
-};
-
-const WebView = WebViewDefault as unknown as ComponentType<WebViewComponentProps>;
-
-export type MapCoords = { lat: number; lng: number };
+  originWhitelist: string[];
+  onShouldStartLoadWithRequest: (request: { url: string }) => boolean;
+  applicationNameForUserAgent: string;
+  scrollEnabled: boolean;
+  onError: () => void;
+  onMessage: (event: { nativeEvent: { data: string } }) => void;
+}>;
 
 export type LocationMapHandle = {
   goTo: (coords: MapCoords, zoom?: number) => void;
+  /** Keep camera + pickup point aligned with the visible map above the sheet */
+  setSheetCover: (bottomPadRatio: number, focusYRatio: number) => void;
 };
 
 type Props = {
   initial: MapCoords;
   onCenterChange: (coords: MapCoords) => void;
-  onMyLocation?: () => void;
-  showMyLocationButton?: boolean;
-  /** Vertical pin position in the map (0–1). Use mid-point of the visible map above the sheet. */
-  pinYRatio?: number;
-  /** Freeze map interaction / size changes (e.g. while keyboard is open). */
+  onReady?: () => void;
   locked?: boolean;
-  style?: StyleProp<ViewStyle>;
 };
 
-function leafletHtml(initial: MapCoords, pinYRatio: number) {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    html, body, #map { margin: 0; height: 100%; width: 100%; background: #e8efec; }
-    .leaflet-control-attribution, .leaflet-control-zoom { display: none !important; }
-  </style>
-</head>
-<body>
-  <div id="map"></div>
-  <script>
-    var PIN_Y = ${pinYRatio};
-    var map = L.map('map', { zoomControl: false, attributionControl: false });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: ''
-    }).addTo(map);
-
-    function pinLatLng() {
-      var size = map.getSize();
-      return map.containerPointToLatLng(L.point(size.x / 2, size.y * PIN_Y));
-    }
-
-    // Place lat/lng exactly under the pin (no stacked panBy drift)
-    function placeAtPin(lat, lng, zoom) {
-      zoom = zoom || 17;
-      var size = map.getSize();
-      if (!size.x || !size.y) {
-        map.setView([lat, lng], zoom, { animate: false });
-        return;
-      }
-      var targetPoint = L.point(size.x / 2, size.y * PIN_Y);
-      var projected = map.project([lat, lng], zoom);
-      var centerPoint = projected.subtract(targetPoint).add(size.divideBy(2));
-      var center = map.unproject(centerPoint, zoom);
-      map.setView(center, zoom, { animate: false });
-    }
-
-    map.whenReady(function () {
-      placeAtPin(${initial.lat}, ${initial.lng}, 17);
-      setTimeout(function () { placeAtPin(${initial.lat}, ${initial.lng}, 17); postCenter(); }, 50);
-    });
-
-    function postCenter() {
-      var c = pinLatLng();
-      var payload = JSON.stringify({ type: 'center', lat: c.lat, lng: c.lng });
-      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(payload);
-    }
-    map.on('moveend', postCenter);
-
-    function onMessage(raw) {
-      try {
-        var msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (msg && msg.type === 'setCenter' && typeof msg.lat === 'number' && typeof msg.lng === 'number') {
-          placeAtPin(msg.lat, msg.lng, msg.zoom || map.getZoom());
-        }
-      } catch (e) {}
-    }
-    document.addEventListener('message', function (e) { onMessage(e.data); });
-    window.addEventListener('message', function (e) { onMessage(e.data); });
-  </script>
-</body>
-</html>`;
+function makeHtml(initial: MapCoords) {
+  return `<!doctype html>
+<html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.js"></script>
+<style>html,body,#map{margin:0;width:100%;height:100%;background:#d5ddd9}</style>
+</head><body><div id="map"></div>
+<script>
+const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+window.bottomPadRatio = 0.68;
+window.focusYRatio = 0.16;
+try {
+  const map = new maplibregl.Map({
+    container:'map', center:${JSON.stringify([initial.lng, initial.lat])},
+    zoom:16, maxZoom:20, dragRotate:false, pitchWithRotate:false,
+    style:{version:8,sources:{streets:{type:'raster',
+      tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize:256,maxzoom:19,attribution:'© OpenStreetMap contributors'}},
+      layers:[{id:'streets',type:'raster',source:'streets'}]}
+  });
+  const pad = () => {
+    const h = map.getContainer().clientHeight;
+    return {top:0,left:0,right:0,bottom:Math.round(h * window.bottomPadRatio)};
+  };
+  const focusPoint = () => {
+    const box = map.getContainer();
+    return [box.clientWidth / 2, box.clientHeight * window.focusYRatio];
+  };
+  window.goTo = (center, zoom) => map.jumpTo({center,zoom,padding:pad()});
+  window.setSheetCover = (bottomPadRatio, focusYRatio) => {
+    window.bottomPadRatio = bottomPadRatio;
+    window.focusYRatio = focusYRatio;
+    const c = map.getCenter();
+    map.jumpTo({center:[c.lng,c.lat],zoom:map.getZoom(),padding:pad()});
+  };
+  window.goTo(${JSON.stringify([initial.lng, initial.lat])},16);
+  map.on('load', () => post({type:'ready'}));
+  map.on('error', () => post({type:'error'}));
+  map.on('idle', () => { if (map.areTilesLoaded()) post({type:'idle'}); });
+  map.on('moveend', (event) => {
+    if (!event.originalEvent) return;
+    const point = map.unproject(focusPoint());
+    post({type:'pickup',lat:point.lat,lng:point.lng});
+  });
+} catch (_) { post({type:'error'}); }
+</script></body></html>`;
 }
 
 export const LocationMap = forwardRef<LocationMapHandle, Props>(function LocationMap(
-  {
-    initial,
-    onCenterChange,
-    onMyLocation,
-    showMyLocationButton = true,
-    pinYRatio = 0.5,
-    locked = false,
-    style,
-  },
-  ref,
+  { initial, onCenterChange, onReady, locked }, ref,
 ) {
-  const webRef = useRef<WebViewLike>(null);
-  const html = useMemo(
-    () => leafletHtml(initial, pinYRatio),
-    [initial.lat, initial.lng, pinYRatio],
-  );
+  const web = useRef<MapWebViewHandle>(null);
+  const [source] = useState(() => ({ html: makeHtml(initial) }));
+  const [failed, setFailed] = useState(false);
 
-  const goTo = useCallback((coords: MapCoords, zoom = 17) => {
-    const payload = JSON.stringify({
-      type: 'setCenter', lat: coords.lat, lng: coords.lng, zoom,
-    });
-    webRef.current?.injectJavaScript(
-      `(function(){try{var msg=${payload};if(msg&&msg.type==='setCenter'){placeAtPin(msg.lat,msg.lng,msg.zoom||map.getZoom());}}catch(e){} true;})();`,
-    );
-  }, []);
-
-  useImperativeHandle(ref, () => ({ goTo }), [goTo]);
-
-  const onMessage = useCallback((event: WebViewMessageEvent) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data) as { type?: string; lat?: number; lng?: number };
-      if (data.type === 'center' && typeof data.lat === 'number' && typeof data.lng === 'number') {
-        onCenterChange({ lat: data.lat, lng: data.lng });
-      }
-    } catch {
-      // ignore
-    }
-  }, [onCenterChange]);
+  useImperativeHandle(ref, () => ({
+    goTo({ lng, lat }, zoom = 16) {
+      web.current?.injectJavaScript(
+        `window.goTo?.(${JSON.stringify([lng, lat])}, ${JSON.stringify(zoom)}); true;`,
+      );
+    },
+    setSheetCover(bottomPadRatio, focusYRatio) {
+      web.current?.injectJavaScript(
+        `window.setSheetCover?.(${JSON.stringify(bottomPadRatio)}, ${JSON.stringify(focusYRatio)}); true;`,
+      );
+    },
+  }), []);
 
   return (
-    <View style={[styles.wrap, style]} pointerEvents={locked ? 'none' : 'auto'}>
+    <View style={styles.container} pointerEvents={locked ? 'none' : 'auto'}>
       <WebView
-        ref={webRef}
+        ref={web}
+        source={source}
         originWhitelist={['*']}
-        source={{ html }}
-        onMessage={onMessage}
-        style={styles.map}
-        javaScriptEnabled
-        domStorageEnabled
+        onShouldStartLoadWithRequest={({ url }) => url === 'about:blank' || url.startsWith('data:text/html')}
+        applicationNameForUserAgent="ManaPrayanam/1.0"
         scrollEnabled={false}
-        overScrollMode="never"
-        setSupportMultipleWindows={false}
-        mixedContentMode="always"
-        pointerEvents={locked ? 'none' : 'auto'}
+        onError={() => setFailed(true)}
+        onMessage={({ nativeEvent }) => {
+          try {
+            const message = JSON.parse(nativeEvent.data);
+            if (message.type === 'ready') onReady?.();
+            if (message.type === 'error') setFailed(true);
+            if (message.type === 'idle') setFailed(false);
+            if (message.type === 'pickup' && Number.isFinite(message.lat) && Number.isFinite(message.lng)) {
+              onCenterChange({ lat: message.lat, lng: message.lng });
+            }
+          } catch {
+            // Ignore messages outside the map protocol.
+          }
+        }}
       />
-      <View pointerEvents="none" style={styles.pinWrap}>
-        <View style={[styles.pinAnchor, { top: `${pinYRatio * 100}%` }]}>
-          <View style={styles.youBubble}>
-            <Ionicons name="person" size={12} color={color.surface} />
-            <Text style={styles.youLabel}>You</Text>
-          </View>
-          <View style={styles.pinDot} />
-          <View style={styles.pinStem} />
-        </View>
-      </View>
-      {showMyLocationButton && onMyLocation ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="My location"
-          onPress={onMyLocation}
-          style={({ pressed }) => [styles.locBtn, pressed && styles.dim]}
-        >
-          <Ionicons name="locate" size={22} color={color.brand} />
-        </Pressable>
-      ) : null}
+      {failed && <Text accessibilityRole="alert" style={styles.error}>Map unavailable. Check your connection.</Text>}
     </View>
   );
 });
 
 const styles = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    overflow: 'hidden',
-    backgroundColor: color.tint,
-  },
-  map: { flex: 1, backgroundColor: color.tint },
-  pinWrap: {
-    ...StyleSheet.absoluteFill,
-  },
-  pinAnchor: {
-    position: 'absolute',
-    left: '50%',
-    marginLeft: -22,
-    alignItems: 'center',
-    transform: [{ translateY: -40 }],
-  },
-  youBubble: {
-    minHeight: 28,
-    paddingHorizontal: 10,
-    borderRadius: 14,
-    backgroundColor: color.brand,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 4,
-    marginBottom: 2,
-  },
-  youLabel: {
-    color: color.surface,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  pinDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: color.brand,
-    borderWidth: 2,
-    borderColor: color.surface,
-  },
-  pinStem: {
-    width: 2,
-    height: 10,
-    backgroundColor: color.brand,
-    marginTop: -1,
-  },
-  locBtn: {
-    position: 'absolute',
-    right: spacing.sm,
-    bottom: spacing.sm,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.line,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dim: { opacity: 0.7 },
+  container: { ...StyleSheet.absoluteFill, backgroundColor: '#D5DDD9' },
+  error: { position: 'absolute', top: '38%', alignSelf: 'center', backgroundColor: '#fff', padding: 8 },
 });

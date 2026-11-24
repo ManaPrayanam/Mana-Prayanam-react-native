@@ -11,7 +11,7 @@ export type RideDraft = {
   dropLabel: string;
   pickup: MapCoords | null;
   drop: MapCoords | null;
-  vehicle: RideVehicle;
+  vehicle: RideVehicle | null;
 };
 
 let draft: RideDraft = {
@@ -19,7 +19,7 @@ let draft: RideDraft = {
   dropLabel: '',
   pickup: null,
   drop: null,
-  vehicle: 'bike',
+  vehicle: null,
 };
 
 const listeners = new Set<Listener>();
@@ -59,7 +59,7 @@ export function clearRideDraft() {
     dropLabel: '',
     pickup: null,
     drop: null,
-    vehicle: draft.vehicle,
+    vehicle: null,
   };
   emit();
 }

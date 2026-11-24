@@ -21,7 +21,6 @@ import { MapBottomSheet } from '@/components/map-bottom-sheet';
 import {
   clearRideDraft,
   getRideDestination,
-  getRideDraft,
   setRideDestination,
   setRideDraft,
   subscribeRideDestination,
@@ -102,7 +101,8 @@ export function RequestScreen() {
   const [locating, setLocating] = useState(true);
   const [pickup, setPickup] = useState('');
   const [destination, setDestination] = useState(() => getRideDestination());
-  const [service, setService] = useState<RideVehicle>(() => getRideDraft().vehicle);
+  /** No default — user must tap Auto or Bike. */
+  const [service, setService] = useState<RideVehicle | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [locationHint, setLocationHint] = useState('');
   const [sheetExpanded, setSheetExpanded] = useState(false);
@@ -148,6 +148,8 @@ export function RequestScreen() {
     useCallback(() => {
       setDestination(getRideDestination());
       editingDestination.current = false;
+      // Never pre-select Auto/Bike — user picks each time.
+      setService(null);
       // Sheet remounts at mid snap — keep My location visible.
       setSheetExpanded(false);
       sheetPosition.value = SCREEN_H - SHEET_MID_H;
@@ -287,9 +289,10 @@ export function RequestScreen() {
   }, [applyGps, lookupAddress]);
 
   const openDropLocation = useCallback((vehicle?: RideVehicle) => {
-    const next = vehicle ?? service;
-    setService(next);
-    setRideDraft({ vehicle: next });
+    if (vehicle) {
+      setService(vehicle);
+      setRideDraft({ vehicle });
+    }
     editingDestination.current = true;
     router.push({
       pathname: '/destination',
@@ -298,7 +301,7 @@ export function RequestScreen() {
         destination,
       },
     });
-  }, [pickup, destination, service]);
+  }, [pickup, destination]);
 
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;

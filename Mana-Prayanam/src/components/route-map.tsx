@@ -37,6 +37,7 @@ export type RouteMapHandle = {
     distKm?: number,
     vehicleKind?: 'bike' | 'auto',
   ) => void;
+  frameApproachingDriver: () => void;
 };
 
 type Props = {
@@ -108,11 +109,13 @@ html,body,#map{margin:0;width:100%;height:100%;background:#e8eee9}
 .fleet-wrap{width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:transparent}
 .fleet{width:30px;height:30px;object-fit:contain;background:transparent;border:0;border-radius:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))}
 .driver-wrap{
-  width:58px;height:58px;border-radius:29px;background:#fff;
-  border:3px solid #159447;display:flex;align-items:center;justify-content:center;
-  box-shadow:0 3px 10px rgba(0,0,0,.35);
+  width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+  background:transparent;
 }
-.driver-wrap img{width:42px;height:42px;object-fit:contain;display:block}
+.driver-wrap img{
+  width:36px;height:36px;object-fit:contain;display:block;
+  filter:drop-shadow(0 1px 3px rgba(0,0,0,.45));
+}
 .radar-wrap{width:160px;height:160px;position:relative;pointer-events:none}
 .radar-ring{
   position:absolute;left:50%;top:50%;width:100%;height:100%;box-sizing:border-box;
@@ -183,6 +186,9 @@ try {
       tileSize: 256, maxzoom: 19, attribution: '© OpenStreetMap' } },
       layers: [{ id: 'streets', type: 'raster', source: 'streets' }] }
   });
+  // Exposed so RN can force camera/markers even if page JS is stale
+  window.__map = map;
+  window.__pickup = pickup;
 
   /**
    * Road-snapped nearby fleet. Marker art faces RIGHT (east), so CSS rotate
@@ -243,6 +249,8 @@ try {
   let driverImgEl = null;
   let etaMarker = null;
   let approachTimer = null;
+  let approachStart = null;
+  let approachEnd = null;
 
   window.setVehicleIcon = function(kind) {
     currentVehicle = kind === 'auto' ? 'auto' : 'bike';
@@ -311,27 +319,69 @@ try {
     img.style.transform = 'rotate(' + angle + 'deg)';
   }
 
-  function approachPad() {
-    const h = map.getContainer().clientHeight || 600;
-    // Keep padding small enough that fitBounds can still show the vehicle
-    return {
-      top: 70,
-      left: 36,
-      right: 36,
-      bottom: Math.min(Math.round(h * 0.42), h - 220),
-    };
+  /** Frame vehicle origin + pickup ABOVE the sheet using jumpTo (fitBounds was failing). */
+  function forceFrameDriverOrigin(a, b) {
+    const dLng = Math.abs(a[0] - b[0]);
+    const dLat = Math.abs(a[1] - b[1]);
+    const span = Math.max(dLng, dLat, 0.012);
+    let zoom = 11.4;
+    if (span < 0.01) zoom = 13;
+    else if (span < 0.014) zoom = 12.4;
+    else if (span < 0.02) zoom = 11.9;
+    else if (span < 0.028) zoom = 11.5;
+    else zoom = 11.1;
+    // Shift center south so the pair sits in the upper visible area above the sheet
+    const center = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 - dLat * 0.28];
+    try { map.stop(); } catch (_) {}
+    map.jumpTo({ center: center, zoom: zoom });
   }
 
-  function fitDriverAndPickup(a, b) {
-    const bounds = new maplibregl.LngLatBounds(a, a);
-    bounds.extend(b);
-    try {
-      map.fitBounds(bounds, { padding: approachPad(), maxZoom: 13.2, duration: 700 });
-    } catch (_) {
-      try {
-        map.fitBounds(bounds, { padding: 48, maxZoom: 12.5, duration: 700 });
-      } catch (__) {}
+  window.forceShowDriverOrigin = function(driverLng, driverLat) {
+    forceFrameDriverOrigin([driverLng, driverLat], pickup.slice());
+  };
+
+  function setDriverPoint(lngLat) {
+    const feature = {
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Point', coordinates: lngLat },
+    };
+    if (map.getSource('driver-point')) {
+      map.getSource('driver-point').setData(feature);
+      return;
     }
+    map.addSource('driver-point', { type: 'geojson', data: feature });
+    map.addLayer({
+      id: 'driver-halo',
+      type: 'circle',
+      source: 'driver-point',
+      paint: {
+        'circle-radius': 14,
+        'circle-color': '#159447',
+        'circle-opacity': 0.22,
+      },
+    });
+    map.addLayer({
+      id: 'driver-dot',
+      type: 'circle',
+      source: 'driver-point',
+      paint: {
+        'circle-radius': 5,
+        'circle-color': '#D99A16',
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#FFFFFF',
+      },
+    });
+  }
+
+  function makeDriverMarkerEl(kind) {
+    const wrap = document.createElement('div');
+    wrap.className = 'driver-wrap';
+    const img = document.createElement('img');
+    img.alt = kind === 'auto' ? 'Auto' : 'Bike';
+    img.src = icons[kind] || icons.bike;
+    wrap.appendChild(img);
+    return { wrap: wrap, img: img };
   }
 
   function runApproachAlongPath(path, mins, vehicleKind) {
@@ -348,6 +398,11 @@ try {
         properties: {},
         geometry: { type: 'LineString', coordinates: path },
       });
+      try {
+        if (map.getLayer('approach-line')) {
+          map.setLayoutProperty('approach-line', 'visibility', 'visible');
+        }
+      } catch (_) {}
     } else {
       map.addSource('approach', {
         type: 'geojson',
@@ -362,24 +417,15 @@ try {
         type: 'line',
         source: 'approach',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#159447', 'line-width': 5, 'line-opacity': 0.95 },
+        paint: { 'line-color': '#159447', 'line-width': 6, 'line-opacity': 0.95 },
       });
     }
 
     const start = path[0];
     const end = path[path.length - 1];
-    const wrap = document.createElement('div');
-    wrap.className = 'driver-wrap';
-    const img = document.createElement('img');
-    img.alt = currentVehicle === 'auto' ? 'Auto' : 'Bike';
-    img.src = icons[currentVehicle] || icons.bike;
-    img.onerror = function() {
-      // Fallback glyph if PNG fails to decode in WebView
-      wrap.textContent = currentVehicle === 'auto' ? '🛺' : '🛵';
-      wrap.style.fontSize = '28px';
-    };
-    wrap.appendChild(img);
-    driverImgEl = img;
+    approachStart = start;
+    approachEnd = end;
+
     if (driverMarker) {
       try { driverMarker.remove(); } catch (_) {}
       driverMarker = null;
@@ -388,34 +434,84 @@ try {
       try { etaMarker.remove(); } catch (_) {}
       etaMarker = null;
     }
-    faceAlong(img, path[0], path[Math.min(1, path.length - 1)]);
-    driverMarker = new maplibregl.Marker({ element: wrap, anchor: 'center' })
-      .setLngLat(start)
-      .setOffset([0, 0])
-      .addTo(map);
+
+    let moveImg = null;
+    // Prefer the RN-injected origin marker if present — keep it and move it
+    if (window.__originMk) {
+      try {
+        driverMarker = window.__originMk;
+        window.__originMk = null;
+        driverMarker.setLngLat(start);
+      } catch (_) {
+        driverMarker = null;
+      }
+    }
+    if (!driverMarker) {
+      const built = makeDriverMarkerEl(currentVehicle);
+      moveImg = built.img;
+      driverImgEl = built.img;
+      faceAlong(built.img, path[0], path[Math.min(1, path.length - 1)]);
+      driverMarker = new maplibregl.Marker({ element: built.wrap, anchor: 'center' })
+        .setLngLat(start)
+        .addTo(map);
+    }
+    setDriverPoint(start);
 
     const startMins = Math.max(1, Math.round(mins) || 8);
     const tag = document.createElement('div');
     tag.className = 'eta-pill';
     tag.textContent = startMins + ' mins away';
-    etaMarker = new maplibregl.Marker({ element: tag, offset: [0, -52], anchor: 'bottom' })
+    etaMarker = new maplibregl.Marker({ element: tag, offset: [0, -58], anchor: 'bottom' })
       .setLngLat(start)
       .addTo(map);
     post({ type: 'approachEta', mins: startMins, arrived: false });
 
-    // Zoom out FIRST so the assigned vehicle is on screen with pickup
-    fitDriverAndPickup(start, end);
-    setTimeout(function() { fitDriverAndPickup(start, end); }, 350);
-    setTimeout(function() { fitDriverAndPickup(start, end); }, 900);
+    function trimApproachBehind(fromIdx) {
+      // Only keep the path AHEAD of the auto — line disappears behind it
+      const remaining = path.slice(Math.min(fromIdx, path.length - 1));
+      if (remaining.length < 2) {
+        remaining.length = 0;
+        remaining.push(path[path.length - 1], path[path.length - 1]);
+      }
+      try {
+        if (map.getSource('approach')) {
+          map.getSource('approach').setData({
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'LineString', coordinates: remaining },
+          });
+        }
+      } catch (_) {}
+    }
 
-    // Time-based move so ETA counts down smoothly and arrival always fires
-    const total = path.length - 1;
-    const durationMs = 22000;
+    function clearApproachLine() {
+      try {
+        if (map.getSource('approach')) {
+          map.getSource('approach').setData({
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'LineString', coordinates: [] },
+          });
+        }
+        if (map.getLayer('approach-line')) {
+          map.setLayoutProperty('approach-line', 'visibility', 'none');
+        }
+      } catch (_) {}
+    }
+
+    // Instant zoom-out to the vehicle's starting location + pickup
+    forceFrameDriverOrigin(start, end);
+    setTimeout(function() { forceFrameDriverOrigin(start, end); }, 200);
+    setTimeout(function() { forceFrameDriverOrigin(start, end); }, 700);
+
+    const total = Math.max(1, path.length - 1);
+    const durationMs = 24000;
     const tickMs = 250;
     const startedAt = Date.now();
     let lastPosted = startMins;
     let finished = false;
     let lastCam = 0;
+    let lastTrimIdx = -1;
 
     approachTimer = setInterval(function() {
       if (finished) return;
@@ -424,13 +520,20 @@ try {
       const idx = Math.min(total, Math.floor(t * total));
       const cur = path[idx];
       const prev = path[Math.max(0, idx - 1)];
-      faceAlong(img, prev, cur);
+      if (moveImg) faceAlong(moveImg, prev, cur);
       if (driverMarker) driverMarker.setLngLat(cur);
+      setDriverPoint(cur);
 
-      // Keep vehicle + pickup framed while approaching
-      if (elapsed - lastCam > 2800 && t < 0.9) {
+      // Erase the green line behind the auto as it moves
+      if (idx !== lastTrimIdx) {
+        lastTrimIdx = idx;
+        trimApproachBehind(idx);
+      }
+
+      // Keep origin framing until vehicle is close
+      if (elapsed - lastCam > 3200 && t < 0.85) {
         lastCam = elapsed;
-        fitDriverAndPickup(cur, end);
+        forceFrameDriverOrigin(cur, end);
       }
 
       const remainMin = Math.max(1, Math.ceil(startMins * (1 - t)));
@@ -448,21 +551,31 @@ try {
         return;
       }
 
-      // At pickup
       finished = true;
       if (driverMarker) driverMarker.setLngLat(path[total]);
+      setDriverPoint(path[total]);
+      clearApproachLine();
       if (etaMarker) {
         try { etaMarker.remove(); } catch (_) {}
         etaMarker = null;
       }
       try {
-        map.easeTo({ center: path[total], zoom: Math.min(map.getZoom(), 15.5), padding: approachPad(), duration: 600 });
+        map.easeTo({
+          center: path[total],
+          zoom: 15.2,
+          padding: { top: 80, left: 40, right: 40, bottom: Math.round((map.getContainer().clientHeight || 700) * 0.5) },
+          duration: 700,
+        });
       } catch (_) {}
       post({ type: 'approachEta', mins: 0, arrived: true });
       clearInterval(approachTimer);
       approachTimer = null;
     }, tickMs);
   }
+
+  window.frameApproachingDriver = function() {
+    if (approachStart && approachEnd) forceFrameDriverOrigin(approachStart, approachEnd);
+  };
 
   window.showApproachingDriver = function(lat, lng, etaMin, _distKm, vehicleKind) {
     window.stopSearchRadar();
@@ -471,7 +584,6 @@ try {
     if (dropPinMarker) dropPinMarker.getElement().style.display = 'none';
     if (dropTagMarker) dropTagMarker.getElement().style.display = 'none';
     if (pickupTagMarker) pickupTagMarker.getElement().style.display = 'none';
-    // Keep pickup dot visible so the destination of the approach is clear
     if (pickDotMarker) pickDotMarker.getElement().style.display = '';
 
     const mins = etaMin || 8;
@@ -480,13 +592,12 @@ try {
       : currentVehicle;
     currentVehicle = kind;
 
-    // Immediately put a temporary marker at the assigned spot so something is visible
-    // while OSRM loads the road path
-    const tempStart = [lng, lat];
-    runApproachAlongPath([tempStart, pickup.slice()], mins, kind);
+    const start = [Number(lng), Number(lat)];
+    // Show vehicle at its origin immediately (before OSRM)
+    runApproachAlongPath([start, pickup.slice()], mins, kind);
 
     const url = 'https://router.project-osrm.org/route/v1/driving/'
-      + lng + ',' + lat + ';' + pickup[0] + ',' + pickup[1]
+      + start[0] + ',' + start[1] + ';' + pickup[0] + ',' + pickup[1]
       + '?overview=full&geometries=geojson';
 
     fetch(url)
@@ -632,13 +743,74 @@ export const RouteMap = forwardRef<RouteMapHandle, Props>(function RouteMap(
     },
     showApproachingDriver(coords, etaMin = 8, distKm = 2.5, vehicleKind?: 'bike' | 'auto') {
       const kind = vehicleKind === 'auto' ? 'auto' : 'bike';
+      const dLat = Math.abs(coords.lat - pickup.lat);
+      const dLng = Math.abs(coords.lng - pickup.lng);
+      const span = Math.max(dLat, dLng, 0.012);
+      const zoom =
+        span < 0.01 ? 13
+          : span < 0.014 ? 12.4
+            : span < 0.02 ? 11.9
+              : span < 0.028 ? 11.5
+                : 11.1;
+      const centerLng = (coords.lng + pickup.lng) / 2;
+      const centerLat = (coords.lat + pickup.lat) / 2 - dLat * 0.28;
+      const iconUri = kind === 'auto' ? AUTO_MARKER_DATA_URI : BIKE_MARKER_DATA_URI;
+
+      // Always inject fresh camera + visible marker from RN (WebView HTML can be stale)
       web.current?.injectJavaScript(
-        `window.showApproachingDriver?.({{LAT}}, {{LNG}}, {{ETA}}, {{KM}}, {{KIND}}); true;`
-          .replace('{{LAT}}', String(coords.lat))
-          .replace('{{LNG}}', String(coords.lng))
-          .replace('{{ETA}}', String(etaMin))
-          .replace('{{KM}}', String(distKm))
-          .replace('{{KIND}}', JSON.stringify(kind)),
+        `(function(){
+          var lat = ${coords.lat};
+          var lng = ${coords.lng};
+          var eta = ${etaMin};
+          var kind = ${JSON.stringify(kind)};
+          var iconUri = ${JSON.stringify(iconUri)};
+          var center = [${centerLng}, ${centerLat}];
+          var zoom = ${zoom};
+          try {
+            if (window.showApproachingDriver) {
+              window.showApproachingDriver(lat, lng, eta, ${distKm}, kind);
+            }
+          } catch (e) {}
+          function placeMarker() {
+            var m = window.__map;
+            if (!m || !window.maplibregl) return;
+            try {
+              if (window.__originMk) { window.__originMk.remove(); window.__originMk = null; }
+              var wrap = document.createElement('div');
+              wrap.style.cssText = 'width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:transparent;';
+              var img = document.createElement('img');
+              img.src = iconUri;
+              img.style.cssText = 'width:36px;height:36px;object-fit:contain;display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,.45));';
+              wrap.appendChild(img);
+              window.__originMk = new maplibregl.Marker({ element: wrap, anchor: 'center' }).setLngLat([lng, lat]).addTo(m);
+            } catch (e) {}
+          }
+          function hardZoom() {
+            var m = window.__map;
+            if (!m) return;
+            try { m.stop(); } catch (e) {}
+            try { m.jumpTo({ center: center, zoom: zoom }); } catch (e) {}
+          }
+          placeMarker();
+          hardZoom();
+          setTimeout(hardZoom, 100);
+          setTimeout(hardZoom, 400);
+          setTimeout(hardZoom, 800);
+          setTimeout(hardZoom, 1400);
+        })(); true;`,
+      );
+    },
+    frameApproachingDriver() {
+      web.current?.injectJavaScript(
+        `(function(){
+          try {
+            if (window.frameApproachingDriver) window.frameApproachingDriver();
+            else if (window.forceShowDriverOrigin && window.__pickup) {
+              var p = window.__pickup;
+              /* no-op without driver coords */
+            }
+          } catch (e) {}
+        })(); true;`,
       );
     },
   }));

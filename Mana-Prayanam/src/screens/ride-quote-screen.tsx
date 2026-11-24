@@ -33,8 +33,8 @@ const DUMMY_DRIVERS = {
     trips: '2.1k',
     vehicle: 'Honda Activa',
     plate: 'AP 39 BK 4521',
-    etaMin: 8,
-    distKm: 2.6,
+    etaMin: 7,
+    distKm: 1.8,
     photo: 'https://randomuser.me/api/portraits/men/32.jpg',
   },
   auto: {
@@ -43,8 +43,8 @@ const DUMMY_DRIVERS = {
     trips: '3.4k',
     vehicle: 'Bajaj RE Auto',
     plate: 'AP 39 AT 8821',
-    etaMin: 8,
-    distKm: 2.4,
+    etaMin: 7,
+    distKm: 1.8,
     photo: 'https://randomuser.me/api/portraits/men/45.jpg',
   },
 } as const;
@@ -209,6 +209,8 @@ export function RideQuoteScreen() {
       setRideOtp((prev) => prev || String(Math.floor(1000 + Math.random() * 9000)));
       setPhase('matched');
       setBooking(false);
+      setTimeout(() => mapRef.current?.frameApproachingDriver(), 300);
+      setTimeout(() => mapRef.current?.frameApproachingDriver(), 800);
     }, 4500);
   }
 

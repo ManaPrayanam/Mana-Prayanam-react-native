@@ -21,8 +21,11 @@ import { MapBottomSheet } from '@/components/map-bottom-sheet';
 import {
   clearRideDraft,
   getRideDestination,
+  getRideDraft,
   setRideDestination,
+  setRideDraft,
   subscribeRideDestination,
+  type RideVehicle,
 } from '@/location/ride-draft';
 import { color, radius, spacing } from '@/theme/brand';
 import { peekLocation, warmLocation } from '@/location/warm-location';
@@ -99,6 +102,7 @@ export function RequestScreen() {
   const [locating, setLocating] = useState(true);
   const [pickup, setPickup] = useState('');
   const [destination, setDestination] = useState(() => getRideDestination());
+  const [service, setService] = useState<RideVehicle>(() => getRideDraft().vehicle);
   const [geocoding, setGeocoding] = useState(false);
   const [locationHint, setLocationHint] = useState('');
   const [sheetExpanded, setSheetExpanded] = useState(false);
@@ -282,6 +286,20 @@ export function RequestScreen() {
     }
   }, [applyGps, lookupAddress]);
 
+  const openDropLocation = useCallback((vehicle?: RideVehicle) => {
+    const next = vehicle ?? service;
+    setService(next);
+    setRideDraft({ vehicle: next });
+    editingDestination.current = true;
+    router.push({
+      pathname: '/destination',
+      params: {
+        pickup: pickup || 'Current location',
+        destination,
+      },
+    });
+  }, [pickup, destination, service]);
+
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
     let cancelled = false;
@@ -436,16 +454,7 @@ export function RequestScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Where to?"
-            onPress={() => {
-              editingDestination.current = true;
-              router.push({
-                pathname: '/destination',
-                params: {
-                  pickup: pickup || 'Current location',
-                  destination,
-                },
-              });
-            }}
+            onPress={() => openDropLocation()}
             style={({ pressed }) => [styles.whereToBtn, pressed && styles.dim]}
           >
             <Ionicons name="search" size={18} color="#6B7280" />
@@ -476,28 +485,52 @@ export function RequestScreen() {
         <View style={styles.services}>
           <Text accessibilityRole="header" style={styles.serviceTitle}>Service</Text>
           <View style={styles.serviceRow}>
-            <View style={styles.serviceTile} accessible accessibilityLabel="Auto">
-              <View style={styles.serviceIconBox}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Auto"
+              accessibilityState={{ selected: service === 'auto' }}
+              onPress={() => openDropLocation('auto')}
+              style={({ pressed }) => [
+                styles.serviceTile,
+                service === 'auto' && styles.serviceTileOn,
+                pressed && styles.dim,
+              ]}
+            >
+              <View style={[styles.serviceIconBox, service === 'auto' && styles.serviceIconBoxOn]}>
                 <Image
-                  source={require('@/assets/images/fleet/auto.png')}
+                  source={require('@/assets/images/fleet/auto-3d.png')}
                   resizeMode="contain"
                   style={styles.serviceIcon}
                   accessible={false}
                 />
               </View>
-              <Text style={styles.serviceLabel}>Auto</Text>
-            </View>
-            <View style={styles.serviceTile} accessible accessibilityLabel="Bike">
-              <View style={styles.serviceIconBox}>
+              <Text style={[styles.serviceLabel, service === 'auto' && styles.serviceLabelOn]}>
+                Auto
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Bike"
+              accessibilityState={{ selected: service === 'bike' }}
+              onPress={() => openDropLocation('bike')}
+              style={({ pressed }) => [
+                styles.serviceTile,
+                service === 'bike' && styles.serviceTileOn,
+                pressed && styles.dim,
+              ]}
+            >
+              <View style={[styles.serviceIconBox, service === 'bike' && styles.serviceIconBoxOn]}>
                 <Image
-                  source={require('@/assets/images/fleet/bike.png')}
+                  source={require('@/assets/images/fleet/bike-3d.png')}
                   resizeMode="contain"
                   style={styles.serviceIcon}
                   accessible={false}
                 />
               </View>
-              <Text style={styles.serviceLabel}>Bike</Text>
-            </View>
+              <Text style={[styles.serviceLabel, service === 'bike' && styles.serviceLabelOn]}>
+                Bike
+              </Text>
+            </Pressable>
           </View>
         </View>
 
@@ -749,23 +782,37 @@ const styles = StyleSheet.create({
   serviceTile: {
     flex: 1,
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 6,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  serviceTileOn: {
+    borderColor: '#159447',
+    backgroundColor: '#F0FAF3',
   },
   serviceIconBox: {
     width: '100%',
-    height: 88,
+    height: 64,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#159447',
-    backgroundColor: '#FFFFFF',
+    borderColor: '#F3F4F6',
+    backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
-  serviceIcon: { width: 78, height: 60 },
+  serviceIconBoxOn: {
+    borderColor: '#159447',
+    backgroundColor: '#FFFFFF',
+  },
+  serviceIcon: { width: 52, height: 40 },
   serviceLabel: { color: '#000000', fontSize: 14, fontWeight: '700' },
+  serviceLabelOn: { color: '#159447' },
   promoWrap: {
     width: '100%',
     gap: 8,

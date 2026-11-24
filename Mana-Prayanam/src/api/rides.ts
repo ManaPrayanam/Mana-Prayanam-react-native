@@ -3,7 +3,13 @@ import { ApiError, request } from './client';
 
 export type RideStatus = 'requested' | 'accepted' | 'in_progress' | 'completed' | 'cancelled';
 export type AvailableRide = { id: string; pickup: string; destination: string; created_at: string };
-export type Ride = AvailableRide & { status: RideStatus; driver_id: string | null; vehicle_id: string | null };
+export type Ride = AvailableRide & {
+  status: RideStatus;
+  driver_id: string | null;
+  vehicle_id: string | null;
+  start_otp?: string | null;
+  vehicle_type?: 'bike' | 'auto' | null;
+};
 export type RideEvent = { status: RideStatus; actor_id: string; created_at: string };
 
 export type VehicleQuote = {
@@ -19,8 +25,8 @@ export type RideQuote = {
   distanceKm: number;
   durationMin: number;
   geometry: { type: 'LineString'; coordinates: [number, number][] };
-  nearbyVehicles: Array<{ id: string; lat: number; lng: number }>;
-  nearbyBikes?: Array<{ id: string; lat: number; lng: number }>;
+  nearbyVehicles: Array<{ id: string; lat: number; lng: number; bearing?: number }>;
+  nearbyBikes?: Array<{ id: string; lat: number; lng: number; bearing?: number }>;
   quotes: { bike: VehicleQuote; auto: VehicleQuote };
 };
 
@@ -49,21 +55,65 @@ function fareFor(vehicle: 'bike' | 'auto', distanceKm: number): VehicleQuote {
   return { vehicle, fareInr, durationMin, distanceKm: Math.round(distanceKm * 10) / 10 };
 }
 
-function nearbyAroundPickup(pickup: MapCoords) {
-  // Scatter dummy fleet around the pickup pin (Rapido-style).
+function nearbyFallback(pickup: MapCoords) {
   const offsets = [
-    { dLat: 0.0007, dLng: 0.00015 },
-    { dLat: 0.00035, dLng: 0.00075 },
-    { dLat: -0.0002, dLng: 0.00085 },
-    { dLat: -0.00065, dLng: 0.0003 },
-    { dLat: -0.00045, dLng: -0.00055 },
-    { dLat: 0.00025, dLng: -0.0007 },
+    { dLat: 0.00055, dLng: 0.00012 },
+    { dLat: 0.00028, dLng: 0.0006 },
+    { dLat: -0.00018, dLng: 0.0007 },
+    { dLat: -0.00055, dLng: 0.00022 },
+    { dLat: -0.00035, dLng: -0.0005 },
+    { dLat: 0.00022, dLng: -0.00058 },
   ];
   return offsets.map((o, i) => ({
     id: `near-${i + 1}`,
     lat: pickup.lat + o.dLat,
     lng: pickup.lng + o.dLng,
+    bearing: (i * 55) % 360,
   }));
+}
+
+/**
+ * Place available fleet on real nearby roads (not buildings / not the trip line).
+ * Shoots short OSRM drives in several directions so each bike sits on a driveable lane.
+ */
+async function nearbyOnNearbyRoads(pickup: MapCoords) {
+  const bearings = [20, 70, 115, 165, 210, 260, 305, 350];
+  const cosLat = Math.cos((pickup.lat * Math.PI) / 180);
+  const spots = await Promise.all(
+    bearings.slice(0, 6).map(async (deg, i) => {
+      const rad = (deg * Math.PI) / 180;
+      const distKm = 0.07 + (i % 3) * 0.035; // ~70–140 m away
+      const dest = {
+        lat: pickup.lat + (distKm / 111.32) * Math.cos(rad),
+        lng: pickup.lng + (distKm / (111.32 * Math.max(cosLat, 0.2))) * Math.sin(rad),
+      };
+      try {
+        const route = await fetchOsrmRoute(pickup, dest);
+        const coords = route.geometry!.coordinates;
+        // Sit on that nearby road, a bit away from the pickup pin
+        const idx = Math.max(
+          1,
+          Math.min(coords.length - 1, Math.floor(coords.length * (0.45 + (i % 3) * 0.12))),
+        );
+        const [lng, lat] = coords[idx];
+        const prev = coords[Math.max(0, idx - 1)];
+        // Geographic bearing clockwise from north (degrees)
+        let bearing = (Math.atan2(lng - prev[0], lat - prev[1]) * 180) / Math.PI;
+        bearing = ((bearing % 360) + 360) % 360;
+        // Prefer the "upright" direction along the road (not reverse/upside-down)
+        if (bearing > 90 && bearing < 270) bearing = (bearing + 180) % 360;
+        return { id: `near-${i + 1}`, lat, lng, bearing };
+      } catch {
+        return {
+          id: `near-${i + 1}`,
+          lat: dest.lat,
+          lng: dest.lng,
+          bearing: deg,
+        };
+      }
+    }),
+  );
+  return spots;
 }
 
 async function fetchOsrmRoute(pickup: MapCoords, drop: MapCoords) {
@@ -104,7 +154,7 @@ export async function buildLocalQuote(pickup: MapCoords, drop: MapCoords): Promi
     // straight fallback only if OSRM is unreachable
   }
 
-  const nearbyVehicles = nearbyAroundPickup(pickup);
+  const nearbyVehicles = await nearbyOnNearbyRoads(pickup).catch(() => nearbyFallback(pickup));
   return {
     pickup,
     drop,
@@ -125,7 +175,7 @@ function normalizeQuote(raw: RideQuote): RideQuote {
     ? raw.nearbyVehicles
     : raw.nearbyBikes?.length
       ? raw.nearbyBikes
-      : nearbyAroundPickup(raw.pickup);
+      : nearbyFallback(raw.pickup);
   return { ...raw, nearbyVehicles: nearby };
 }
 
@@ -151,6 +201,13 @@ export async function fetchRideQuote(token: string, pickup: MapCoords, drop: Map
         // keep server quote
       }
     }
+    // Always snap fleet onto real nearby roads (server still returns circle scatter).
+    try {
+      normalized.nearbyVehicles = await nearbyOnNearbyRoads(pickup);
+      normalized.nearbyBikes = normalized.nearbyVehicles;
+    } catch {
+      // keep whatever we have
+    }
     return normalized;
   } catch (error) {
     if (
@@ -165,8 +222,13 @@ export async function fetchRideQuote(token: string, pickup: MapCoords, drop: Map
   }
 }
 
-export const requestRide = (token: string, pickup: string, destination: string) =>
-  request<Ride>('/rides', 'POST', { pickup, destination }, token);
+export const requestRide = (
+  token: string,
+  pickup: string,
+  destination: string,
+  vehicle?: 'bike' | 'auto',
+) =>
+  request<Ride>('/rides', 'POST', { pickup, destination, vehicle }, token);
 export const acceptRide = (token: string, id: string, vehicleId: string) =>
   request<Ride>(`/rides/${id}/accept`, 'POST', { vehicleId }, token);
 export const updateRide = (token: string, id: string, status: 'in_progress' | 'completed' | 'cancelled') =>

@@ -15,8 +15,15 @@ export function BackButton({ onPress, disabled = false }: {
 }
 
 const styles = StyleSheet.create({
-  button: { width: 44, height: 44, borderWidth: 1, borderColor: '#B5B5B5', borderRadius: 22,
-    justifyContent: 'center', alignItems: 'center' },
+  button: {
+    width: 32,
+    height: 32,
+    borderWidth: 1,
+    borderColor: '#B5B5B5',
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   pressed: { backgroundColor: '#EEEEEE' },
   disabled: { opacity: 0.55 },
 });

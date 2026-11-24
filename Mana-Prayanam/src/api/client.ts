@@ -10,9 +10,10 @@ export function errorMessage(error: unknown) {
 
 const hosted = process.env.EXPO_PUBLIC_API_URL?.trim();
 const local = process.env.EXPO_PUBLIC_LOCAL_API_URL?.trim();
-const configured = __DEV__ ? local || hosted : hosted;
+// Dev: local override if set, else hosted. Release/APK: always hosted server URL.
+const configured = __DEV__ ? (local || hosted) : hosted;
 const localHost = Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1';
-const base = (configured || `http://${localHost}:3000/api`).replace(/\/$/, '');
+const base = (configured || (__DEV__ ? `http://${localHost}:3000/api` : 'https://srv2177895.hstgr.cloud/api')).replace(/\/$/, '');
 
 export async function request<T>(path: string, method = 'GET', body?: object, token?: string): Promise<T> {
   let response: Response;

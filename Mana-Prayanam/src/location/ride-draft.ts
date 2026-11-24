@@ -4,11 +4,14 @@ import type { MapCoords } from '@/api/geocode';
 
 type Listener = () => void;
 
+export type RideVehicle = 'bike' | 'auto';
+
 export type RideDraft = {
   pickupLabel: string;
   dropLabel: string;
   pickup: MapCoords | null;
   drop: MapCoords | null;
+  vehicle: RideVehicle | null;
 };
 
 let draft: RideDraft = {
@@ -16,6 +19,7 @@ let draft: RideDraft = {
   dropLabel: '',
   pickup: null,
   drop: null,
+  vehicle: null,
 };
 
 const listeners = new Set<Listener>();
@@ -44,12 +48,19 @@ export function setRideDraft(next: Partial<RideDraft>) {
     dropLabel: next.dropLabel !== undefined ? next.dropLabel.trim() : draft.dropLabel,
     pickup: next.pickup !== undefined ? next.pickup : draft.pickup,
     drop: next.drop !== undefined ? next.drop : draft.drop,
+    vehicle: next.vehicle !== undefined ? next.vehicle : draft.vehicle,
   };
   emit();
 }
 
 export function clearRideDraft() {
-  draft = { pickupLabel: '', dropLabel: '', pickup: null, drop: null };
+  draft = {
+    pickupLabel: '',
+    dropLabel: '',
+    pickup: null,
+    drop: null,
+    vehicle: null,
+  };
   emit();
 }
 

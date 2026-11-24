@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { searchPlaces, type MapCoords, type PlaceHit } from '@/api/geocode';
-import { setRideDraft } from '@/location/ride-draft';
+import { getRideDraft, setRideDraft } from '@/location/ride-draft';
 import { peekLocation, warmLocation } from '@/location/warm-location';
 import { color, spacing } from '@/theme/brand';
 
@@ -148,10 +148,11 @@ export function DestinationScreen() {
   }, [leave]);
 
   function goToQuote(dropLabel: string, dropCoords: MapCoords) {
-    const pickupCoords = peekLocation();
+    const draft = getRideDraft();
+    const pickupCoords = draft.pickup ?? peekLocation();
     if (!pickupCoords) return;
     setRideDraft({
-      pickupLabel: pickup || 'Current location',
+      pickupLabel: draft.pickupLabel || pickup || 'Current location',
       dropLabel,
       pickup: pickupCoords,
       drop: dropCoords,

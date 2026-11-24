@@ -8,7 +8,7 @@ export const authStyles = StyleSheet.create({
   loginScroll: { flexGrow: 1, width: '100%', maxWidth: 560, alignSelf: 'center' },
   scrollKeyboard: { paddingBottom: 40 },
   loginArtwork: { width: '100%', height: 230, position: 'absolute', top: 0, left: 0, right: 0 },
-  backText: { fontSize: 30, lineHeight: 34, color: '#000000' },
+  backText: { fontSize: 22, lineHeight: 26, color: '#000000' },
   sheet: { flexGrow: 1, backgroundColor: color.surface, borderTopLeftRadius: 32, borderTopRightRadius: 32,
     paddingHorizontal: 22, paddingTop: 28, paddingBottom: 24, gap: 16 },
   loginSheet: { borderTopLeftRadius: 0, borderTopRightRadius: 0, paddingTop: 18 },

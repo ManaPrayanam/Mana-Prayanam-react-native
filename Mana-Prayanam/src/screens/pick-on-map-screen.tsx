@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,23 +14,35 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { reverseGeocode, searchPlaces, type MapCoords, type PlaceHit } from '@/api/geocode';
 import { LocationMap, type LocationMapHandle } from '@/components/location-map';
-import { setRideDraft } from '@/location/ride-draft';
+import { getRideDraft, setRideDraft } from '@/location/ride-draft';
 import { peekLocation, warmLocation } from '@/location/warm-location';
 import { color, spacing } from '@/theme/brand';
 
 export function PickOnMapScreen() {
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ mode?: string }>();
+  const editingPickup = params.mode === 'pickup';
   const mapRef = useRef<LocationMapHandle>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geocodeReq = useRef(0);
   const skipNextGeocode = useRef(false);
 
-  const [initial, setInitial] = useState<MapCoords | null>(() => peekLocation());
-  const [center, setCenter] = useState<MapCoords | null>(() => peekLocation());
-  const [locating, setLocating] = useState(() => !peekLocation());
+  const [initial, setInitial] = useState<MapCoords | null>(() => {
+    const draft = getRideDraft();
+    if (editingPickup && draft.pickup) return draft.pickup;
+    return peekLocation();
+  });
+  const [center, setCenter] = useState<MapCoords | null>(() => {
+    const draft = getRideDraft();
+    if (editingPickup && draft.pickup) return draft.pickup;
+    return peekLocation();
+  });
+  const [locating, setLocating] = useState(() => !peekLocation() && !getRideDraft().pickup);
   const [locationError, setLocationError] = useState('');
-  const [address, setAddress] = useState('Move the map to set drop');
+  const [address, setAddress] = useState(
+    editingPickup ? 'Move the map to set pickup' : 'Move the map to set drop',
+  );
   const [geocoding, setGeocoding] = useState(false);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<PlaceHit[]>([]);
@@ -126,11 +138,28 @@ export function PickOnMapScreen() {
 
   function confirm() {
     const label = address.trim();
-    if (!label || label === 'Move the map to set drop' || !center) return;
-    const pickupCoords = peekLocation() ?? initial;
+    if (
+      !label
+      || label === 'Move the map to set drop'
+      || label === 'Move the map to set pickup'
+      || !center
+    ) {
+      return;
+    }
+
+    if (editingPickup) {
+      setRideDraft({
+        pickupLabel: label,
+        pickup: center,
+      });
+      router.replace('/ride-quote');
+      return;
+    }
+
+    const pickupCoords = getRideDraft().pickup ?? peekLocation() ?? initial;
     if (!pickupCoords) return;
     setRideDraft({
-      pickupLabel: 'Current location',
+      pickupLabel: getRideDraft().pickupLabel || 'Current location',
       dropLabel: label,
       pickup: pickupCoords,
       drop: center,
@@ -198,11 +227,11 @@ export function PickOnMapScreen() {
           <TextInput
             value={query}
             onChangeText={onSearchChange}
-            placeholder="Search drop location"
+            placeholder={editingPickup ? 'Search pickup location' : 'Search drop location'}
             placeholderTextColor="#9AA0B4"
             style={styles.searchInput}
             returnKeyType="search"
-            accessibilityLabel="Search drop location"
+            accessibilityLabel={editingPickup ? 'Search pickup location' : 'Search drop location'}
           />
           {searching ? <ActivityIndicator size="small" color={color.brand} /> : null}
         </View>
@@ -229,13 +258,13 @@ export function PickOnMapScreen() {
       ) : null}
 
       <View style={[styles.bottomCard, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
-        <Text style={styles.dropLabel}>Drop at</Text>
+        <Text style={styles.dropLabel}>{editingPickup ? 'Pickup at' : 'Drop at'}</Text>
         <Text style={styles.dropAddress} numberOfLines={2}>
           {geocoding ? 'Detecting location…' : address}
         </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Confirm drop location"
+          accessibilityLabel={editingPickup ? 'Confirm pickup location' : 'Confirm drop location'}
           disabled={geocoding}
           onPress={confirm}
           style={({ pressed }) => [styles.confirmBtn, pressed && styles.dim, geocoding && styles.disabled]}
